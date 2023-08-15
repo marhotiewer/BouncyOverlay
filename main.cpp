@@ -10,15 +10,16 @@ const int WINDOW_HEIGHT = 1440;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
 constexpr int circleSegments = 100;
 
-GLfloat projectionMatrixData[16];
-GLint projectionMatrixLocation; 
-GLuint shaderProgram;
+HWND hwnd;
+HGLRC hRC;
+HDC hDC;
 
-HDC initTransparency(SDL_Window* window) {
+// Makes window transparent, click through and creates a transparent OpenGL rendering context
+void initTransparency(SDL_Window* window) {
     SDL_SysWMinfo wmInfo{ 0 };
     SDL_VERSION(&wmInfo.version);
     SDL_GetWindowWMInfo(window, &wmInfo);
-    HWND hwnd = wmInfo.info.win.window;
+    hwnd = wmInfo.info.win.window;
 
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
     SetLayeredWindowAttributes(hwnd, 0, 0, 0);
@@ -52,13 +53,11 @@ HDC initTransparency(SDL_Window* window) {
         0, 0, 0                           // Layer Masks Ignored
     };
 
-    HDC hDC = GetDC(hwnd);
+    hDC = GetDC(hwnd);
     INT pixelFormat = ChoosePixelFormat(hDC, &pfd);
     SetPixelFormat(hDC, pixelFormat, &pfd);
-    HGLRC hRC = wglCreateContext(hDC);
+    hRC = wglCreateContext(hDC);
     wglMakeCurrent(hDC, hRC);
-
-    return hDC;
 }
 
 const char* vertexShaderSource = R"(
@@ -96,7 +95,11 @@ void generateOrthographicProjection(float left, float right, float bottom, float
     projectionMatrix[15] = 1.0f;
 }
 
-void initGL()
+GLfloat projectionMatrixData[16];
+GLint projectionMatrixLocation;
+GLuint shaderProgram;
+
+void initOpenGL()
 {
     glewInit();
 
@@ -199,10 +202,8 @@ public:
 int main(int argc, char* argv[])
 {
     SDL_Window* window = SDL_CreateWindow("OpenGL", 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALWAYS_ON_TOP);
-    SDL_GLContext context = SDL_GL_CreateContext(window);
-    
-    HDC hDC = initTransparency(window);
-    initGL();
+    initTransparency(window);
+    initOpenGL();
 
     Circle circle1(25, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2));
     vec2 delta(10, 10);
@@ -239,7 +240,10 @@ int main(int argc, char* argv[])
         }
         circle1.move(delta);
     }
-    SDL_GL_DeleteContext(context);
+    wglMakeCurrent(NULL, NULL);
+    wglDeleteContext(hRC);
+    ReleaseDC(hwnd, hDC);
+    SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
 }
