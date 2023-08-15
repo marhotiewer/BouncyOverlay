@@ -11,69 +11,6 @@ GLfloat projectionMatrixData[16];
 GLint projectionMatrixLocation; 
 GLuint shaderProgram;
 
-struct Circle {
-private:
-    float vertices[circleSegments + 1][2];
-    GLuint VAO, VBO;
-public:
-    float radius;
-    float X, Y;
-    Circle(float radius, float positionX, float positionY) : radius(radius), X(positionX), Y(positionY) {
-        generateVertices();
-        setupBuffers();
-    }
-
-    void generateVertices() {
-        vertices[0][0] = X;
-        vertices[0][1] = Y;
-        for (int i = 1; i <= circleSegments; i++) {
-            float theta = 2.0f * float(M_PI) * float(i - 1) / float(circleSegments - 1);
-            vertices[i][0] = X + radius * (float)cos(theta);
-            vertices[i][1] = Y + radius * (float)sin(theta);
-        }
-    }
-
-    void setupBuffers() {
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-
-        glBindVertexArray(VAO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-
-    void render() {
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, circleSegments + 1);
-        glBindVertexArray(0);
-    }
-
-    float delta = 0.01f;
-    void update() {
-
-        if (X > ASPECT_RATIO - radius)
-        {
-            delta = -0.01f;
-        }
-        if (X < -ASPECT_RATIO + radius)
-        {
-            delta = 0.01f;
-        }
-
-        X += delta;
-        generateVertices();
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-};
-
 const char* vertexShaderSource = R"(
     #version 460 core
 
@@ -98,7 +35,8 @@ const char* fragmentShaderSource = R"(
     }
 )";
 
-void generateOrthographicProjection(float left, float right, float bottom, float top, float nearVal, float farVal, GLfloat* projectionMatrix) {
+void generateOrthographicProjection(float left, float right, float bottom, float top, float nearVal, float farVal, GLfloat* projectionMatrix)
+{
     projectionMatrix[0] = 2.0f / (right - left);
     projectionMatrix[5] = 2.0f / (top - bottom);
     projectionMatrix[10] = -2.0f / (farVal - nearVal);
@@ -137,6 +75,77 @@ void initGL()
     generateOrthographicProjection(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f, projectionMatrixData);
 }
 
+struct vec2 {
+    int x, y;
+    vec2(int x, int y) : x(x), y(y) {}
+    float get_x_norm() {
+        return -ASPECT_RATIO + (2.0f * x / WINDOW_WIDTH) * ASPECT_RATIO;
+    }
+    float get_y_norm() {
+        return 1.0f - (2.0f * y / WINDOW_HEIGHT);
+    }
+    vec2 operator+(const vec2& other) const {
+        return vec2(x + other.x, y + other.y);
+    }
+    vec2& operator+=(const vec2& other) {
+        x += other.x;
+        y += other.y;
+        return *this;
+    }
+};
+
+struct Circle {
+private:
+    float vertices[circleSegments + 1][2];
+    GLuint VAO, VBO;
+    float norm_radius;
+public:
+    vec2 position;
+    Circle(float radius, vec2 pos) : norm_radius(radius / WINDOW_HEIGHT * 2), position(pos) {
+        generateVertices();
+        setupBuffers();
+    }
+
+    void generateVertices() {
+        vertices[0][0] = position.get_x_norm();
+        vertices[0][1] = position.get_y_norm();
+        for (int i = 1; i <= circleSegments; i++) {
+            float theta = 2.0f * float(M_PI) * float(i - 1) / float(circleSegments - 1);
+            vertices[i][0] = position.get_x_norm() + norm_radius * (float)cos(theta);
+            vertices[i][1] = position.get_y_norm() + norm_radius * (float)sin(theta);
+        }
+    }
+
+    void setupBuffers() {
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+    }
+
+    void render() {
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, circleSegments + 1);
+        glBindVertexArray(0);
+    }
+
+    void move(vec2 delta) {
+        position += delta;
+        generateVertices();
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+};
+
 int main(int argc, char* argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
@@ -149,11 +158,8 @@ int main(int argc, char* argv[])
     SDL_GLContext context = SDL_GL_CreateContext(window);
     initGL();
 
-    Circle circle1(0.25f, 0.0f, 0.0f);
-    Circle circle2(0.25f, -0.5f, -0.5f);
-    Circle circle3(0.25f, 0.5f, 0.5f);
-    Circle circle4(0.25f, -0.5f, 0.5f);
-    Circle circle5(0.25f, 0.5f, -0.5f);
+    Circle circle1(25, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2));
+    vec2 delta(10, 10);
 
     SDL_Event windowEvent;
     while (true)
@@ -163,23 +169,28 @@ int main(int argc, char* argv[])
             if (windowEvent.type == SDL_QUIT) break;
         }
         glClear(GL_COLOR_BUFFER_BIT);
-
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, projectionMatrixData);
-
-        circle1.update();
-        circle2.update();
-        circle3.update();
-        circle4.update();
-        circle5.update();
-
         circle1.render();
-        circle2.render();
-        circle3.render();
-        circle4.render();
-        circle5.render();
-
         SDL_GL_SwapWindow(window);
+
+        if (circle1.position.x > WINDOW_WIDTH - 25)
+        {
+            delta.x = -10;
+        }
+        if (circle1.position.x < 25)
+        {
+            delta.x = 10;
+        }
+        if (circle1.position.y > WINDOW_HEIGHT - 25)
+        {
+            delta.y = -10;
+        }
+        if (circle1.position.y < 25)
+        {
+            delta.y = 10;
+        }
+        circle1.move(delta);
     }
     SDL_GL_DeleteContext(context);
     SDL_Quit();
