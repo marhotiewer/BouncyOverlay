@@ -1,15 +1,65 @@
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
 #include <GL/glew.h>
 #include <cstdio>
+#include <windows.h>
+#include <dwmapi.h>
 
-const int WINDOW_WIDTH = 1920;
-const int WINDOW_HEIGHT = 1080;
+const int WINDOW_WIDTH = 2560;
+const int WINDOW_HEIGHT = 1440;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
 constexpr int circleSegments = 100;
 
 GLfloat projectionMatrixData[16];
 GLint projectionMatrixLocation; 
 GLuint shaderProgram;
+
+HDC initTransparency(SDL_Window* window) {
+    SDL_SysWMinfo wmInfo{ 0 };
+    SDL_VERSION(&wmInfo.version);
+    SDL_GetWindowWMInfo(window, &wmInfo);
+    HWND hwnd = wmInfo.info.win.window;
+
+    SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    SetLayeredWindowAttributes(hwnd, 0, 0, 0);
+
+    DWM_BLURBEHIND bb = { 0 };
+    HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
+    bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+    bb.hRgnBlur = hRgn;
+    bb.fEnable = TRUE;
+    DwmEnableBlurBehindWindow(hwnd, &bb);
+
+    PIXELFORMATDESCRIPTOR pfd = {
+        sizeof(PIXELFORMATDESCRIPTOR),
+        1,                                // Version Number
+        PFD_DRAW_TO_WINDOW |              // Format Must Support Window
+        PFD_SUPPORT_OPENGL |              // Format Must Support OpenGL
+        PFD_SUPPORT_COMPOSITION |         // Format Must Support Composition
+        PFD_DOUBLEBUFFER,                 // Must Support Double Buffering
+        PFD_TYPE_RGBA,                    // Request An RGBA Format
+        32,                               // Select Our Color Depth
+        0, 0, 0, 0, 0, 0,                 // Color Bits Ignored
+        8,                                // An Alpha Buffer
+        0,                                // Shift Bit Ignored
+        0,                                // No Accumulation Buffer
+        0, 0, 0, 0,                       // Accumulation Bits Ignored
+        24,                               // 16Bit Z-Buffer (Depth Buffer)
+        8,                                // Some Stencil Buffer
+        0,                                // No Auxiliary Buffer
+        PFD_MAIN_PLANE,                   // Main Drawing Layer
+        0,                                // Reserved
+        0, 0, 0                           // Layer Masks Ignored
+    };
+
+    HDC hDC = GetDC(hwnd);
+    INT pixelFormat = ChoosePixelFormat(hDC, &pfd);
+    SetPixelFormat(hDC, pixelFormat, &pfd);
+    HGLRC hRC = wglCreateContext(hDC);
+    wglMakeCurrent(hDC, hRC);
+
+    return hDC;
+}
 
 const char* vertexShaderSource = R"(
     #version 460 core
@@ -148,14 +198,10 @@ public:
 
 int main(int argc, char* argv[])
 {
-    SDL_Init(SDL_INIT_VIDEO);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 6);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-
-    SDL_Window* window = SDL_CreateWindow("OpenGL", 100, 100, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_OPENGL);
+    SDL_Window* window = SDL_CreateWindow("OpenGL", 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALWAYS_ON_TOP);
     SDL_GLContext context = SDL_GL_CreateContext(window);
+    
+    HDC hDC = initTransparency(window);
     initGL();
 
     Circle circle1(25, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2));
@@ -168,11 +214,12 @@ int main(int argc, char* argv[])
         {
             if (windowEvent.type == SDL_QUIT) break;
         }
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, projectionMatrixData);
         circle1.render();
-        SDL_GL_SwapWindow(window);
+        glFlush();
+        SwapBuffers(hDC);
 
         if (circle1.position.x > WINDOW_WIDTH - 25)
         {
