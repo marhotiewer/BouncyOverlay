@@ -1,29 +1,49 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
-#include <GL/glew.h>
-#include <cstdio>
-#include <windows.h>
 #include <dwmapi.h>
+#include <GL/glew.h>
+#include <GL/wglew.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 const int WINDOW_WIDTH = 2560;
 const int WINDOW_HEIGHT = 1440;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
-constexpr int circleSegments = 100;
 
-HWND hwnd;
-HGLRC hRC;
-HDC hDC;
+const char* vertexShaderSource = R"(
+    #version 460 core
 
-// Makes window transparent, click through and creates a transparent OpenGL rendering context
-void initTransparency(SDL_Window* window) {
+    uniform mat4 projectionMatrix; // Projection matrix uniform
+
+    layout (location = 0) in vec2 aPos;
+
+    void main()
+    {
+        gl_Position = projectionMatrix * vec4(aPos, 0.0, 1.0);
+    }
+)";
+
+const char* fragmentShaderSource = R"(
+    #version 460 core
+    out vec4 FragColor;
+    
+    void main()
+    {
+        FragColor = vec4(1.0, 0.5, 0.8, 1.0); // Bright pink color
+    }
+)";
+
+HWND initTransparency(SDL_Window* window) {
     SDL_SysWMinfo wmInfo{ 0 };
     SDL_VERSION(&wmInfo.version);
     SDL_GetWindowWMInfo(window, &wmInfo);
-    hwnd = wmInfo.info.win.window;
+    HWND hwnd = wmInfo.info.win.window;
 
+    // Enable click through
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
-    SetLayeredWindowAttributes(hwnd, 0, 0, 0);
 
+    // Enable transparency
     DWM_BLURBEHIND bb = { 0 };
     HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
     bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
@@ -31,12 +51,15 @@ void initTransparency(SDL_Window* window) {
     bb.fEnable = TRUE;
     DwmEnableBlurBehindWindow(hwnd, &bb);
 
+    return hwnd;
+}
+
+HDC initOpenGL(HWND hwnd) {
     PIXELFORMATDESCRIPTOR pfd = {
         sizeof(PIXELFORMATDESCRIPTOR),
         1,                                // Version Number
         PFD_DRAW_TO_WINDOW |              // Format Must Support Window
         PFD_SUPPORT_OPENGL |              // Format Must Support OpenGL
-        PFD_SUPPORT_COMPOSITION |         // Format Must Support Composition
         PFD_DOUBLEBUFFER,                 // Must Support Double Buffering
         PFD_TYPE_RGBA,                    // Request An RGBA Format
         32,                               // Select Our Color Depth
@@ -53,56 +76,18 @@ void initTransparency(SDL_Window* window) {
         0, 0, 0                           // Layer Masks Ignored
     };
 
-    hDC = GetDC(hwnd);
-    INT pixelFormat = ChoosePixelFormat(hDC, &pfd);
-    SetPixelFormat(hDC, pixelFormat, &pfd);
-    hRC = wglCreateContext(hDC);
-    wglMakeCurrent(hDC, hRC);
-}
-
-const char* vertexShaderSource = R"(
-    #version 460 core
-
-    uniform mat4 projectionMatrix; // Projection matrix uniform
-
-    layout (location = 0) in vec2 aPos;
-
-    void main()
-    {
-        // Apply the projection matrix transformation
-        gl_Position = projectionMatrix * vec4(aPos, 0.0, 1.0);
-    }
-)";
-
-const char* fragmentShaderSource = R"(
-    #version 460 core
-    out vec4 FragColor;
-    
-    void main()
-    {
-        FragColor = vec4(1.0, 0.5, 0.8, 1.0); // Bright pink color
-    }
-)";
-
-void generateOrthographicProjection(float left, float right, float bottom, float top, float nearVal, float farVal, GLfloat* projectionMatrix)
-{
-    projectionMatrix[0] = 2.0f / (right - left);
-    projectionMatrix[5] = 2.0f / (top - bottom);
-    projectionMatrix[10] = -2.0f / (farVal - nearVal);
-    projectionMatrix[12] = -(right + left) / (right - left);
-    projectionMatrix[13] = -(top + bottom) / (top - bottom);
-    projectionMatrix[14] = -(farVal + nearVal) / (farVal - nearVal);
-    projectionMatrix[15] = 1.0f;
-}
-
-GLfloat projectionMatrixData[16];
-GLint projectionMatrixLocation;
-GLuint shaderProgram;
-
-void initOpenGL()
-{
+    HDC hdc = GetDC(hwnd);
+    INT pixelFormat = ChoosePixelFormat(hdc, &pfd);
+    SetPixelFormat(hdc, pixelFormat, &pfd);
+    HGLRC hrc = wglCreateContext(hdc);
+    wglMakeCurrent(hdc, hrc);
     glewInit();
 
+    return hdc;
+}
+
+GLuint initShaders()
+{
     // Compile shaders
     GLuint vertexShader, fragmentShader;
     vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -115,7 +100,7 @@ void initOpenGL()
     glCompileShader(fragmentShader);
 
     // Link shaders into a shader program
-    shaderProgram = glCreateProgram();
+    GLuint shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
@@ -124,8 +109,7 @@ void initOpenGL()
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
-    generateOrthographicProjection(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f, projectionMatrixData);
+    return shaderProgram;
 }
 
 struct vec2 {
@@ -149,12 +133,14 @@ struct vec2 {
 
 struct Circle {
 private:
-    float vertices[circleSegments + 1][2];
+    float vertices[101][2];
     GLuint VAO, VBO;
     float norm_radius;
+    vec2 delta;
 public:
     vec2 position;
-    Circle(float radius, vec2 pos) : norm_radius(radius / WINDOW_HEIGHT * 2), position(pos) {
+    float radius;
+    Circle(float radius, vec2 pos, vec2 delta) : radius(radius), position(pos), delta(delta), norm_radius(radius / WINDOW_HEIGHT * 2) {
         generateVertices();
         setupBuffers();
     }
@@ -162,8 +148,8 @@ public:
     void generateVertices() {
         vertices[0][0] = position.get_x_norm();
         vertices[0][1] = position.get_y_norm();
-        for (int i = 1; i <= circleSegments; i++) {
-            float theta = 2.0f * float(M_PI) * float(i - 1) / float(circleSegments - 1);
+        for (int i = 1; i <= 100; i++) {
+            float theta = 2.0f * float(M_PI) * float(i - 1) / float(99);
             vertices[i][0] = position.get_x_norm() + norm_radius * (float)cos(theta);
             vertices[i][1] = position.get_y_norm() + norm_radius * (float)sin(theta);
         }
@@ -186,7 +172,7 @@ public:
 
     void render() {
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, circleSegments + 1);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 101);
         glBindVertexArray(0);
     }
 
@@ -197,17 +183,43 @@ public:
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
+
+    void update() {
+        if (position.x > WINDOW_WIDTH - radius)
+        {
+            delta.x = -delta.x;
+        }
+        if (position.x < radius)
+        {
+            delta.x = -delta.x;
+        }
+        if (position.y > WINDOW_HEIGHT - radius)
+        {
+            delta.y = -delta.y;
+        }
+        if (position.y < radius)
+        {
+            delta.y = -delta.y;
+        }
+        move(delta);
+    }
 };
 
 int main(int argc, char* argv[])
 {
-    SDL_Window* window = SDL_CreateWindow("OpenGL", 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALWAYS_ON_TOP);
-    initTransparency(window);
-    initOpenGL();
+    SDL_Window* window          = SDL_CreateWindow("OpenGL", 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SKIP_TASKBAR);
+    HWND        hwnd            = initTransparency(window);
+    HDC         hdc             = initOpenGL(hwnd);
+    GLuint      shaderProgram   = initShaders();
 
-    Circle circle1(25, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2));
-    vec2 delta(10, 10);
+    // Set up orthographic view, we only do this once because the view wont get changed
+    GLint projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
+    glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
+    Circle circle1(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, 5));
+    Circle circle2(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, -5));
+    Circle circle3(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, -5));
+    Circle circle4(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, 5));
     SDL_Event windowEvent;
     while (true)
     {
@@ -217,32 +229,21 @@ int main(int argc, char* argv[])
         }
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(shaderProgram);
-        glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, projectionMatrixData);
+        glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
         circle1.render();
+        circle2.render();
+        circle3.render();
+        circle4.render();
         glFlush();
-        SwapBuffers(hDC);
-
-        if (circle1.position.x > WINDOW_WIDTH - 25)
-        {
-            delta.x = -10;
-        }
-        if (circle1.position.x < 25)
-        {
-            delta.x = 10;
-        }
-        if (circle1.position.y > WINDOW_HEIGHT - 25)
-        {
-            delta.y = -10;
-        }
-        if (circle1.position.y < 25)
-        {
-            delta.y = 10;
-        }
-        circle1.move(delta);
+        SwapBuffers(hdc);
+        circle1.update();
+        circle2.update();
+        circle3.update();
+        circle4.update();
     }
     wglMakeCurrent(NULL, NULL);
-    wglDeleteContext(hRC);
-    ReleaseDC(hwnd, hDC);
+    wglDeleteContext(wglGetCurrentContext());
+    ReleaseDC(hwnd, hdc);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
