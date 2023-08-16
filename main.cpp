@@ -34,14 +34,12 @@ const char* fragmentShaderSource = R"(
     }
 )";
 
-HWND initTransparency(SDL_Window* window) {
+HWND initTransparency(SDL_Window* window)
+{
     SDL_SysWMinfo wmInfo{ 0 };
     SDL_VERSION(&wmInfo.version);
     SDL_GetWindowWMInfo(window, &wmInfo);
     HWND hwnd = wmInfo.info.win.window;
-
-    // Enable click through
-    SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
 
     // Enable transparency
     DWM_BLURBEHIND bb = { 0 };
@@ -51,10 +49,15 @@ HWND initTransparency(SDL_Window* window) {
     bb.fEnable = TRUE;
     DwmEnableBlurBehindWindow(hwnd, &bb);
 
+    // Enable click through
+    SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    SetLayeredWindowAttributes(hwnd, 0, 0, 0);
+
     return hwnd;
 }
 
-HDC initOpenGL(HWND hwnd) {
+HDC initOpenGL(HWND hwnd)
+{
     PIXELFORMATDESCRIPTOR pfd = {
         sizeof(PIXELFORMATDESCRIPTOR),
         1,                                // Version Number
@@ -112,7 +115,8 @@ GLuint initShaders()
     return shaderProgram;
 }
 
-struct vec2 {
+struct vec2
+{
     int x, y;
     vec2(int x, int y) : x(x), y(y) {}
     float get_x_norm() {
@@ -131,7 +135,8 @@ struct vec2 {
     }
 };
 
-struct Circle {
+struct Circle
+{
 private:
     float vertices[101][2];
     GLuint VAO, VBO;
@@ -160,12 +165,13 @@ public:
         glGenBuffers(1, &VBO);
 
         glBindVertexArray(VAO);
+
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
-
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
 
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+        
+        glEnableVertexAttribArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
     }
