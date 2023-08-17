@@ -7,8 +7,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-const int WINDOW_WIDTH = 2560;
-const int WINDOW_HEIGHT = 1440;
+const int WINDOW_WIDTH = GetSystemMetrics(SM_CXSCREEN) - 1;
+const int WINDOW_HEIGHT = GetSystemMetrics(SM_CYSCREEN) - 1;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
 
 const char* vertexShaderSource = R"(
@@ -36,6 +36,7 @@ const char* fragmentShaderSource = R"(
 
 HWND initTransparency(SDL_Window* window)
 {
+    // Get HWND handle from SDL_Window
     SDL_SysWMinfo wmInfo{ 0 };
     SDL_VERSION(&wmInfo.version);
     SDL_GetWindowWMInfo(window, &wmInfo);
@@ -51,7 +52,6 @@ HWND initTransparency(SDL_Window* window)
 
     // Enable click through
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
-    SetLayeredWindowAttributes(hwnd, 0, 0, 0);
 
     return hwnd;
 }
@@ -137,12 +137,6 @@ struct vec2
 
 struct Circle
 {
-private:
-    float vertices[101][2];
-    GLuint VAO, VBO;
-    float norm_radius;
-    vec2 delta;
-public:
     vec2 position;
     float radius;
     Circle(float radius, vec2 pos, vec2 delta) : radius(radius), position(pos), delta(delta), norm_radius(radius / WINDOW_HEIGHT * 2) {
@@ -209,11 +203,16 @@ public:
         }
         move(delta);
     }
+private:
+    float vertices[101][2];
+    GLuint VAO, VBO;
+    float norm_radius;
+    vec2 delta;
 };
 
 int main(int argc, char* argv[])
 {
-    SDL_Window* window          = SDL_CreateWindow("OpenGL", 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SKIP_TASKBAR);
+    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP);
     HWND        hwnd            = initTransparency(window);
     HDC         hdc             = initOpenGL(hwnd);
     GLuint      shaderProgram   = initShaders();
@@ -222,10 +221,12 @@ int main(int argc, char* argv[])
     GLint projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
+    // Create circle objects to animate and render
     Circle circle1(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, 5));
     Circle circle2(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, -5));
     Circle circle3(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, -5));
     Circle circle4(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, 5));
+
     SDL_Event windowEvent;
     while (true)
     {
