@@ -6,31 +6,38 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <box2d/box2d.h>
 
 const int WINDOW_WIDTH = GetSystemMetrics(SM_CXSCREEN) - 1;
 const int WINDOW_HEIGHT = GetSystemMetrics(SM_CYSCREEN) - 1;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
+GLint vertexColorLocation;
 
 const char* vertexShaderSource = R"(
     #version 460 core
 
     uniform mat4 projectionMatrix; // Projection matrix uniform
+    uniform vec4 vertexColor;      // Uniform color for all vertices
 
     layout (location = 0) in vec2 aPos;
+
+    out vec4 fragColor; // Output color to fragment shader
 
     void main()
     {
         gl_Position = projectionMatrix * vec4(aPos, 0.0, 1.0);
+        fragColor = vertexColor; // Pass the uniform color to the fragment shader
     }
 )";
 
 const char* fragmentShaderSource = R"(
     #version 460 core
+    in vec4 fragColor; // Input color from vertex shader
     out vec4 FragColor;
     
     void main()
     {
-        FragColor = vec4(1.0, 0.5, 0.8, 1.0); // Bright pink color
+        FragColor = fragColor; // Use the input color as the fragment color
     }
 )";
 
@@ -121,52 +128,54 @@ GLuint initShaders()
     return shaderProgram;
 }
 
-template <typename T>
-struct vec2
+int randomNum(int lower, int upper)
 {
-    T x, y;
-    
-    vec2(T x, T y) : x(x), y(y) {}
-    
-    template <typename U>
-    vec2(const vec2<U>& other) : x(T(other.x)), y(T(other.y)) {}
-
-    float get_x_norm() {
-        return -ASPECT_RATIO + (2.0f * x / WINDOW_WIDTH) * ASPECT_RATIO;
-    }
-    float get_y_norm() {
-        return 1.0f - (2.0f * y / WINDOW_HEIGHT);
-    }
-    vec2 operator+(const vec2& other) const {
-        return vec2(x + other.x, y + other.y);
-    }
-    vec2& operator+=(const vec2& other) {
-        x += other.x;
-        y += other.y;
-        return *this;
-    }
-    vec2 operator*(T scalar) const {
-        return vec2(x * scalar, y * scalar);
-    }
-};
+    return lower + rand() % (upper - lower + 1);
+}
 
 struct Circle
 {
-    vec2<float> position;
+    glm::vec2 position;
     float radius;
 
-    Circle(float radius, vec2<int> pos, vec2<float> delta) : radius(radius), position(pos), delta(delta), norm_radius(radius / WINDOW_HEIGHT * 2) {
+    Circle(glm::vec3 color, float radius, glm::vec2 pos, b2World& world) : radius(radius), position(pos) {
         generateVertices();
         setupBuffers();
+        setupPhysics(world);
+
+        normColor.r = color.r / 255;
+        normColor.g = color.g / 255;
+        normColor.b = color.b / 255;
     }
     void generateVertices() {
-        vertices[0][0] = position.get_x_norm();
-        vertices[0][1] = position.get_y_norm();
+        float normRadius = radius / WINDOW_HEIGHT * 2;
+        float normX = -ASPECT_RATIO + (2.0f * position.x / WINDOW_WIDTH) * ASPECT_RATIO;
+        float normY = 1.0f - (2.0f * position.y / WINDOW_HEIGHT);
+
+        vertices[0][0] = normX;
+        vertices[0][1] = normY;
         for (int i = 1; i <= 100; i++) {
             float theta = 2.0f * float(M_PI) * float(i - 1) / float(99);
-            vertices[i][0] = position.get_x_norm() + norm_radius * (float)cos(theta);
-            vertices[i][1] = position.get_y_norm() + norm_radius * (float)sin(theta);
+            vertices[i][0] = normX + normRadius * (float)cos(theta);
+            vertices[i][1] = normY + normRadius * (float)sin(theta);
         }
+    }
+    void setupPhysics(b2World& world) {
+        b2BodyDef bodyDef;
+        bodyDef.type = b2_dynamicBody;
+        bodyDef.position.Set(position.x / 48.f, position.y / 48.f);
+
+        b2CircleShape circle;
+        circle.m_radius = radius / 48.f;
+
+        b2FixtureDef fixtureDef;
+        fixtureDef.shape = &circle;
+        fixtureDef.density = 1.f;
+        fixtureDef.friction = 1.f;
+        fixtureDef.restitution = 0.75f;
+
+        body = world.CreateBody(&bodyDef);
+        body->CreateFixture(&fixtureDef);
     }
     void setupBuffers() {
         glGenVertexArrays(1, &VAO);
@@ -183,42 +192,44 @@ struct Circle
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
     }
+    void applyForce(b2Vec2 force) {
+        body->ApplyForce(force, body->GetPosition(), true);
+    }
     void render() {
+        glUniform4f(vertexColorLocation, normColor.r, normColor.g, normColor.b, 1.0f); // Set the desired color here
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 101);
         glBindVertexArray(0);
     }
-    void move(vec2<float> delta) {
-        position += delta;
+    void update() {
+        b2Vec2 pos = body->GetPosition();
+        position.x = pos.x * 48.f;
+        position.y = pos.y * 48.f;
         generateVertices();
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
-    void update(float dt) {
-        if (position.x > WINDOW_WIDTH - radius)
-        {
-            delta.x = -delta.x;
-        }
-        if (position.x < radius)
-        {
-            delta.x = -delta.x;
-        }
-        if (position.y > WINDOW_HEIGHT - radius)
-        {
-            delta.y = -delta.y;
-        }
-        if (position.y < radius)
-        {
-            delta.y = -delta.y;
-        }
-        move(delta * dt);
-    }
 private:
     float vertices[101][2];
+    glm::vec3 normColor;
     GLuint VAO, VBO;
-    float norm_radius;
-    vec2<float> delta;
+    b2Body* body;
+};
+
+struct Wall
+{
+    b2Body* body;
+    Wall(glm::vec2 pos, glm::vec2 size, b2World& world) {
+        b2BodyDef groundBodyDef;
+        groundBodyDef.position.Set(pos.x / 48.f, pos.y / 48.f);
+
+        b2PolygonShape groundBox;
+        groundBox.SetAsBox(0.5f * size.x / 48.f, 0.5f * size.y / 48.f);
+
+        body = world.CreateBody(&groundBodyDef);
+        body->CreateFixture(&groundBox, 0.f);
+    }
 };
 
 int main(int argc, char* argv[])
@@ -230,30 +241,57 @@ int main(int argc, char* argv[])
     
     // Set up orthographic view, we only do this once because the view wont get changed
     GLint projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
+    vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
-    // Create circle objects to animate and render
-    Circle circle(50, vec2<int>(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2<float>(100.f, 100.f));
+    b2Vec2 gravity(0.f, 0.f);
+    b2World world(gravity);
 
+    Wall(glm::vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT + 5), glm::vec2(WINDOW_WIDTH, 10), world);
+    Wall(glm::vec2(WINDOW_WIDTH / 2, -5), glm::vec2(WINDOW_WIDTH, 10), world);
+    Wall(glm::vec2(-5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
+    Wall(glm::vec2(WINDOW_WIDTH + 5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
+
+    const int circles_size = 1000;
+    Circle* circles[circles_size] { 0 };
+    size_t position = 0;
+    float timePassed = 0.f;
     SDL_Event windowEvent;
     Uint32 prevTicks = SDL_GetTicks();
+
     while (true)
     {
         Uint32 currentTicks = SDL_GetTicks();
         float deltaTime = (currentTicks - prevTicks) / 1000.0f; // Convert to seconds
         prevTicks = currentTicks;
-
+        timePassed += deltaTime;
+        
         if (SDL_PollEvent(&windowEvent))
         {
             if (windowEvent.type == SDL_QUIT) break;
         }
+
+        if (deltaTime < 1.0f / 60) {
+            world.Step(1.f / 60.f, 6, 2);
+        }
+        if (position < circles_size && timePassed > .01f)
+        {
+            circles[position] = new Circle(glm::vec3(randomNum(0, 255), randomNum(0, 255), randomNum(0, 255)), (float)randomNum(5, 25), glm::vec2(randomNum(50, WINDOW_WIDTH - 50), randomNum(50, WINDOW_HEIGHT - 50)), world);
+            circles[position]->applyForce(b2Vec2((float)randomNum(-1000, 1000), (float)randomNum(-1000, 1000)));
+            
+            timePassed = 0.f;
+            position++;
+        }
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-        circle.render();
+        for (size_t i = 0; i < position; i++)
+        {
+            circles[i]->update();
+            circles[i]->render();
+        }
         glFlush();
         SwapBuffers(hdc);
-        circle.update(deltaTime);
     }
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(wglGetCurrentContext());
