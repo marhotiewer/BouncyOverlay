@@ -53,6 +53,12 @@ HWND initTransparency(SDL_Window* window)
     // Enable click through
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
 
+    // Hide window from task bar and switcher
+    SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
+
+    // Set window always on top
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
     return hwnd;
 }
 
@@ -115,10 +121,16 @@ GLuint initShaders()
     return shaderProgram;
 }
 
+template <typename T>
 struct vec2
 {
-    int x, y;
-    vec2(int x, int y) : x(x), y(y) {}
+    T x, y;
+    
+    vec2(T x, T y) : x(x), y(y) {}
+    
+    template <typename U>
+    vec2(const vec2<U>& other) : x(T(other.x)), y(T(other.y)) {}
+
     float get_x_norm() {
         return -ASPECT_RATIO + (2.0f * x / WINDOW_WIDTH) * ASPECT_RATIO;
     }
@@ -133,17 +145,20 @@ struct vec2
         y += other.y;
         return *this;
     }
+    vec2 operator*(T scalar) const {
+        return vec2(x * scalar, y * scalar);
+    }
 };
 
 struct Circle
 {
-    vec2 position;
+    vec2<float> position;
     float radius;
-    Circle(float radius, vec2 pos, vec2 delta) : radius(radius), position(pos), delta(delta), norm_radius(radius / WINDOW_HEIGHT * 2) {
+
+    Circle(float radius, vec2<int> pos, vec2<float> delta) : radius(radius), position(pos), delta(delta), norm_radius(radius / WINDOW_HEIGHT * 2) {
         generateVertices();
         setupBuffers();
     }
-
     void generateVertices() {
         vertices[0][0] = position.get_x_norm();
         vertices[0][1] = position.get_y_norm();
@@ -153,7 +168,6 @@ struct Circle
             vertices[i][1] = position.get_y_norm() + norm_radius * (float)sin(theta);
         }
     }
-
     void setupBuffers() {
         glGenVertexArrays(1, &VAO);
         glGenBuffers(1, &VBO);
@@ -169,22 +183,19 @@ struct Circle
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
     }
-
     void render() {
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_FAN, 0, 101);
         glBindVertexArray(0);
     }
-
-    void move(vec2 delta) {
+    void move(vec2<float> delta) {
         position += delta;
         generateVertices();
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
-
-    void update() {
+    void update(float dt) {
         if (position.x > WINDOW_WIDTH - radius)
         {
             delta.x = -delta.x;
@@ -201,35 +212,37 @@ struct Circle
         {
             delta.y = -delta.y;
         }
-        move(delta);
+        move(delta * dt);
     }
 private:
     float vertices[101][2];
     GLuint VAO, VBO;
     float norm_radius;
-    vec2 delta;
+    vec2<float> delta;
 };
 
 int main(int argc, char* argv[])
 {
-    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP);
+    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_BORDERLESS);
     HWND        hwnd            = initTransparency(window);
     HDC         hdc             = initOpenGL(hwnd);
     GLuint      shaderProgram   = initShaders();
-
+    
     // Set up orthographic view, we only do this once because the view wont get changed
     GLint projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
     // Create circle objects to animate and render
-    Circle circle1(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, 5));
-    Circle circle2(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, -5));
-    Circle circle3(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(5, -5));
-    Circle circle4(50, vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2(-5, 5));
+    Circle circle(50, vec2<int>(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2), vec2<float>(100.f, 100.f));
 
     SDL_Event windowEvent;
+    Uint32 prevTicks = SDL_GetTicks();
     while (true)
     {
+        Uint32 currentTicks = SDL_GetTicks();
+        float deltaTime = (currentTicks - prevTicks) / 1000.0f; // Convert to seconds
+        prevTicks = currentTicks;
+
         if (SDL_PollEvent(&windowEvent))
         {
             if (windowEvent.type == SDL_QUIT) break;
@@ -237,16 +250,10 @@ int main(int argc, char* argv[])
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-        circle1.render();
-        circle2.render();
-        circle3.render();
-        circle4.render();
+        circle.render();
         glFlush();
         SwapBuffers(hdc);
-        circle1.update();
-        circle2.update();
-        circle3.update();
-        circle4.update();
+        circle.update(deltaTime);
     }
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(wglGetCurrentContext());
