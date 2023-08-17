@@ -135,10 +135,7 @@ int randomNum(int lower, int upper)
 
 struct Circle
 {
-    glm::vec2 position;
-    float radius;
-
-    Circle(glm::vec3 color, float radius, glm::vec2 pos, b2World& world) : radius(radius), position(pos) {
+    Circle(glm::vec3 color, int radius, glm::vec2 pos, b2World& world) : radius(radius), position(pos) {
         generateVertices();
         setupBuffers();
         setupPhysics(world);
@@ -148,14 +145,14 @@ struct Circle
         normColor.b = color.b / 255;
     }
     void generateVertices() {
-        float normRadius = radius / WINDOW_HEIGHT * 2;
+        float normRadius = (float)radius / WINDOW_HEIGHT * 2;
         float normX = -ASPECT_RATIO + (2.0f * position.x / WINDOW_WIDTH) * ASPECT_RATIO;
         float normY = 1.0f - (2.0f * position.y / WINDOW_HEIGHT);
 
         vertices[0][0] = normX;
         vertices[0][1] = normY;
-        for (int i = 1; i <= 100; i++) {
-            float theta = 2.0f * float(M_PI) * float(i - 1) / float(99);
+        for (int i = 1; i <= segments; i++) {
+            float theta = 2.0f * float(M_PI) * float(i - 1) / float(segments - 1);
             vertices[i][0] = normX + normRadius * (float)cos(theta);
             vertices[i][1] = normY + normRadius * (float)sin(theta);
         }
@@ -163,15 +160,15 @@ struct Circle
     void setupPhysics(b2World& world) {
         b2BodyDef bodyDef;
         bodyDef.type = b2_dynamicBody;
-        bodyDef.position.Set(position.x / 48.f, position.y / 48.f);
+        bodyDef.position.Set(position.x / 48.0f, position.y / 48.0f);
 
         b2CircleShape circle;
-        circle.m_radius = radius / 48.f;
+        circle.m_radius = radius / 48.0f;
 
         b2FixtureDef fixtureDef;
         fixtureDef.shape = &circle;
-        fixtureDef.density = 1.f;
-        fixtureDef.friction = 1.f;
+        fixtureDef.density = 1.0f;
+        fixtureDef.friction = 1.0f;
         fixtureDef.restitution = 0.75f;
 
         body = world.CreateBody(&bodyDef);
@@ -198,23 +195,26 @@ struct Circle
     void render() {
         glUniform4f(vertexColorLocation, normColor.r, normColor.g, normColor.b, 1.0f); // Set the desired color here
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 101);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 1);
         glBindVertexArray(0);
     }
     void update() {
         b2Vec2 pos = body->GetPosition();
-        position.x = pos.x * 48.f;
-        position.y = pos.y * 48.f;
+        position.x = pos.x * 48.0f;
+        position.y = pos.y * 48.0f;
         generateVertices();
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 private:
-    float vertices[101][2];
+    const int segments = 100;
+    float vertices[100+1][2];
     glm::vec3 normColor;
+    glm::vec2 position;
     GLuint VAO, VBO;
     b2Body* body;
+    int radius;
 };
 
 struct Wall
@@ -222,13 +222,13 @@ struct Wall
     b2Body* body;
     Wall(glm::vec2 pos, glm::vec2 size, b2World& world) {
         b2BodyDef groundBodyDef;
-        groundBodyDef.position.Set(pos.x / 48.f, pos.y / 48.f);
+        groundBodyDef.position.Set(pos.x / 48.0f, pos.y / 48.0f);
 
         b2PolygonShape groundBox;
-        groundBox.SetAsBox(0.5f * size.x / 48.f, 0.5f * size.y / 48.f);
+        groundBox.SetAsBox(0.5f * size.x / 48.0f, 0.5f * size.y / 48.0f);
 
         body = world.CreateBody(&groundBodyDef);
-        body->CreateFixture(&groundBox, 0.f);
+        body->CreateFixture(&groundBox, 0.0f);
     }
 };
 
@@ -244,8 +244,7 @@ int main(int argc, char* argv[])
     vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
-    b2Vec2 gravity(0.f, 0.f);
-    b2World world(gravity);
+    b2World world({ 0.0f, 0.0f });
 
     Wall(glm::vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT + 5), glm::vec2(WINDOW_WIDTH, 10), world);
     Wall(glm::vec2(WINDOW_WIDTH / 2, -5), glm::vec2(WINDOW_WIDTH, 10), world);
@@ -255,14 +254,15 @@ int main(int argc, char* argv[])
     const int circles_size = 1000;
     Circle* circles[circles_size] { 0 };
     size_t position = 0;
-    float timePassed = 0.f;
+
     SDL_Event windowEvent;
+    float timePassed = 0.0f;
     Uint32 prevTicks = SDL_GetTicks();
 
     while (true)
     {
         Uint32 currentTicks = SDL_GetTicks();
-        float deltaTime = (currentTicks - prevTicks) / 1000.0f; // Convert to seconds
+        float deltaTime = (currentTicks - prevTicks) / 1000.0f; // deltaTime in seconds
         prevTicks = currentTicks;
         timePassed += deltaTime;
         
@@ -270,16 +270,20 @@ int main(int argc, char* argv[])
         {
             if (windowEvent.type == SDL_QUIT) break;
         }
-
         if (deltaTime < 1.0f / 60) {
-            world.Step(1.f / 60.f, 6, 2);
+            world.Step(deltaTime, 6, 2);
         }
-        if (position < circles_size && timePassed > .01f)
+        if (position < circles_size && timePassed > 0.01f)
         {
-            circles[position] = new Circle(glm::vec3(randomNum(0, 255), randomNum(0, 255), randomNum(0, 255)), (float)randomNum(5, 25), glm::vec2(randomNum(50, WINDOW_WIDTH - 50), randomNum(50, WINDOW_HEIGHT - 50)), world);
-            circles[position]->applyForce(b2Vec2((float)randomNum(-1000, 1000), (float)randomNum(-1000, 1000)));
+            glm::vec2   randomPosition(randomNum(50, WINDOW_WIDTH - 50), randomNum(50, WINDOW_HEIGHT - 50));
+            glm::vec3   randomColor(randomNum(0, 255), randomNum(0, 255), randomNum(0, 255));
+            int         randomRadius = randomNum(5, 25);
+            b2Vec2      randomForce((float)randomNum(-1000, 1000), (float)randomNum(-1000, 1000));
+
+            circles[position] = new Circle(randomColor, randomRadius, randomPosition, world);
+            circles[position]->applyForce(randomForce);
             
-            timePassed = 0.f;
+            timePassed = 0.0f;
             position++;
         }
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
