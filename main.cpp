@@ -1,8 +1,8 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
+#include <SDL2/SDL_mixer.h>
 #include <dwmapi.h>
 #include <GL/glew.h>
-#include <GL/wglew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -193,7 +193,7 @@ struct Circle
         body->ApplyForce(force, body->GetPosition(), true);
     }
     void render() {
-        glUniform4f(vertexColorLocation, normColor.r, normColor.g, normColor.b, 1.0f); // Set the desired color here
+        glUniform4f(vertexColorLocation, normColor.r, normColor.g, normColor.b, 1.0f);
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 1);
         glBindVertexArray(0);
@@ -244,6 +244,27 @@ int main(int argc, char* argv[])
     vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
+
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0)
+    {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SDL_mixer initialization failed", Mix_GetError(), NULL);
+        return 1;
+    }
+    const int NUM_AUDIOS = 31;
+    Mix_Chunk* audios[NUM_AUDIOS] = { 0 };
+    for (int i = 0; i < NUM_AUDIOS; ++i)
+    {
+        char filename[100];
+        snprintf(filename, sizeof(filename), "audio/plop_%02d.wav", i + 1);
+        audios[i] = Mix_LoadWAV(filename);
+        if (!audios[i])
+        {
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Failed to load audio file", filename, NULL);
+            return 1;
+        }
+    }
+    Mix_Volume(-1, MIX_MAX_VOLUME / 4);
+
     b2World world({ 0.0f, 0.0f });
 
     Wall(glm::vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT + 5), glm::vec2(WINDOW_WIDTH, 10), world);
@@ -253,7 +274,7 @@ int main(int argc, char* argv[])
 
     const int circles_size = 1000;
     Circle* circles[circles_size] { 0 };
-    size_t position = 0;
+    size_t circles_position = 0;
 
     SDL_Event windowEvent;
     float timePassed = 0.0f;
@@ -273,23 +294,25 @@ int main(int argc, char* argv[])
         if (deltaTime < 1.0f / 60) {
             world.Step(deltaTime, 6, 2);
         }
-        if (position < circles_size && timePassed > 0.01f)
+        if (circles_position < circles_size && timePassed > 0.01f)
         {
             glm::vec2   randomPosition(randomNum(50, WINDOW_WIDTH - 50), randomNum(50, WINDOW_HEIGHT - 50));
             glm::vec3   randomColor(randomNum(0, 255), randomNum(0, 255), randomNum(0, 255));
-            int         randomRadius = randomNum(5, 25);
             b2Vec2      randomForce((float)randomNum(-1000, 1000), (float)randomNum(-1000, 1000));
+            int         randomRadius = randomNum(5, 25);
+            int         randomAudio = randomNum(0, NUM_AUDIOS-1);
 
-            circles[position] = new Circle(randomColor, randomRadius, randomPosition, world);
-            circles[position]->applyForce(randomForce);
-            
+            circles[circles_position] = new Circle(randomColor, randomRadius, randomPosition, world);
+            circles[circles_position]->applyForce(randomForce);
+            Mix_PlayChannel(-1, audios[randomAudio], 0);
+
             timePassed = 0.0f;
-            position++;
+            circles_position++;
         }
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glUseProgram(shaderProgram);
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-        for (size_t i = 0; i < position; i++)
+        for (size_t i = 0; i < circles_position; i++)
         {
             circles[i]->update();
             circles[i]->render();
@@ -297,6 +320,9 @@ int main(int argc, char* argv[])
         glFlush();
         SwapBuffers(hdc);
     }
+    for (size_t i = 0; i < circles_position; i++) delete circles[i];
+    for (int i = 0; i < NUM_AUDIOS; ++i) Mix_FreeChunk(audios[i]);
+    Mix_CloseAudio();
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(wglGetCurrentContext());
     ReleaseDC(hwnd, hdc);
