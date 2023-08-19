@@ -8,12 +8,16 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <box2d/box2d.h>
 
+const int NUM_AUDIOS = 31;
 const int WINDOW_WIDTH = GetSystemMetrics(SM_CXSCREEN) - 1;
 const int WINDOW_HEIGHT = GetSystemMetrics(SM_CYSCREEN) - 1;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
-GLint vertexColorLocation;
 
-const char* vertexShaderSource = R"(
+GLint projectionMatrixLocation;
+GLint vertexColorLocation;
+glm::mat4 orthoMatrix;
+
+const char* vertexSource2D = R"(
     #version 460 core
 
     uniform mat4 projectionMatrix; // Projection matrix uniform
@@ -30,7 +34,7 @@ const char* vertexShaderSource = R"(
     }
 )";
 
-const char* fragmentShaderSource = R"(
+const char* fragmentSource2D = R"(
     #version 460 core
     in vec4 fragColor; // Input color from vertex shader
     out vec4 FragColor;
@@ -102,15 +106,15 @@ HDC initOpenGL(HWND hwnd)
     return hdc;
 }
 
-GLuint initShaders()
+GLuint initShaders(char* vertex, char* fragment)
 {
     // Compile shaders
     GLuint vertexShader, fragmentShader;
     vertexShader = glCreateShader(GL_VERTEX_SHADER);
     fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
 
-    glShaderSource(vertexShader, 1, &vertexShaderSource, nullptr);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, nullptr);
+    glShaderSource(vertexShader, 1, &vertex, nullptr);
+    glShaderSource(fragmentShader, 1, &fragment, nullptr);
 
     glCompileShader(vertexShader);
     glCompileShader(fragmentShader);
@@ -176,16 +180,15 @@ struct Circle
     }
     void setupBuffers() {
         glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-
         glBindVertexArray(VAO);
 
+        glGenBuffers(1, &VBO);
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
 
+        glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
         
-        glEnableVertexAttribArray(0);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         glBindVertexArray(0);
     }
@@ -232,38 +235,93 @@ struct Wall
     }
 };
 
-int main(int argc, char* argv[])
+Mix_Chunk** initAudio(const int NUM_AUDIOS)
 {
-    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_BORDERLESS);
-    HWND        hwnd            = initTransparency(window);
-    HDC         hdc             = initOpenGL(hwnd);
-    GLuint      shaderProgram   = initShaders();
-    
-    // Set up orthographic view, we only do this once because the view wont get changed
-    GLint projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
-    vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
-    glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
-
+    char filename[100];
+    Mix_Chunk** audios = new Mix_Chunk * [NUM_AUDIOS];
 
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0)
     {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SDL_mixer initialization failed", Mix_GetError(), NULL);
-        return 1;
     }
-    const int NUM_AUDIOS = 31;
-    Mix_Chunk* audios[NUM_AUDIOS] = { 0 };
     for (int i = 0; i < NUM_AUDIOS; ++i)
     {
-        char filename[100];
         snprintf(filename, sizeof(filename), "audio/plop_%02d.wav", i + 1);
         audios[i] = Mix_LoadWAV(filename);
         if (!audios[i])
         {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Failed to load audio file", filename, NULL);
-            return 1;
         }
     }
     Mix_Volume(-1, MIX_MAX_VOLUME / 4);
+    return audios;
+}
+
+struct BatchRenderer
+{
+    GLint projectionMatrixUniform;
+    GLint vertexColorUniform;
+    GLuint shader, VAO, VBO;
+    glm::mat4 orthoMatrix;
+    glm::vec2* vertices;
+    int vertexCapacity;
+    int vertexCount;
+
+    BatchRenderer(int vertexCapacity) : vertexCapacity(vertexCapacity), vertexCount(0) {
+        glGenVertexArrays(1, &VAO);
+        glBindVertexArray(VAO);
+
+        glGenBuffers(1, &VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec2) * vertexCapacity, NULL, GL_DYNAMIC_DRAW);
+
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(glm::vec2), (void*)0);
+
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
+
+        shader = initShaders((char*)vertexSource2D, (char*)fragmentSource2D);
+
+        projectionMatrixUniform = glGetUniformLocation(shader, "projectionMatrix");
+        vertexColorUniform = glGetUniformLocation(shader, "vertexColor");
+        orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
+        vertices = new glm::vec2[vertexCapacity];
+    }
+
+    void Render() {
+        glUseProgram(shader);
+        glUniform4f(vertexColorLocation, 1.0f, 0.0f, 1.0f, 1.0f);
+        glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::vec2) * vertexCount, vertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, vertexCount);
+        glBindVertexArray(0);
+
+        vertexCount = 0;
+    }
+
+    void PushVertex(glm::vec2 vertex) {
+        vertices[vertexCount++] = vertex;
+    }
+};
+
+int main(int argc, char* argv[])
+{
+    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_BORDERLESS);
+    HWND        hwnd            = initTransparency(window);
+    HDC         hdc             = initOpenGL(hwnd);
+    GLuint      shaderProgram   = initShaders((char*)vertexSource2D, (char*)fragmentSource2D);
+    Mix_Chunk** audios          = initAudio(NUM_AUDIOS);
+
+    // Set up orthographic view, we only do this once because the view wont get changed
+    projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
+    vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
+    orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
     b2World world({ 0.0f, 0.0f });
 
@@ -321,6 +379,7 @@ int main(int argc, char* argv[])
         SwapBuffers(hdc);
     }
     for (size_t i = 0; i < circles_position; i++) delete circles[i];
+    delete[] &circles;
     for (int i = 0; i < NUM_AUDIOS; ++i) Mix_FreeChunk(audios[i]);
     Mix_CloseAudio();
     wglMakeCurrent(NULL, NULL);
