@@ -8,13 +8,10 @@ EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
-		Static Debug|x64 = Static Debug|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Debug|x64.ActiveCfg = Debug|x64
 		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Debug|x64.Build.0 = Debug|x64
-		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Static Debug|x64.ActiveCfg = StaticDebug|x64
-		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Static Debug|x64.Build.0 = StaticDebug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
