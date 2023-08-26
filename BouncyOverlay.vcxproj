@@ -10,7 +10,7 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{ddcd58cd-5446-48a8-8748-0de369d14b40}</ProjectGuid>
-    <RootNamespace>Graphics</RootNamespace>
+    <RootNamespace>BouncyOverlay</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
