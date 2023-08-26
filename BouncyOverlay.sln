@@ -1,22 +1,22 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.6.33829.357
+VisualStudioVersion = 17.7.34018.315
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Graphics", "Graphics.vcxproj", "{DDCD58CD-5446-48A8-8748-0DE369D14B40}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BouncyOverlay", "BouncyOverlay.vcxproj", "{3A02823D-4D88-47A5-A1A9-14E3B6478BC5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Debug|x64.ActiveCfg = Debug|x64
-		{DDCD58CD-5446-48A8-8748-0DE369D14B40}.Debug|x64.Build.0 = Debug|x64
+		{3A02823D-4D88-47A5-A1A9-14E3B6478BC5}.Debug|x64.ActiveCfg = Debug|x64
+		{3A02823D-4D88-47A5-A1A9-14E3B6478BC5}.Debug|x64.Build.0 = Debug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
-		SolutionGuid = {77DC9EE4-4645-4179-907F-32F1AAC54BA5}
+		SolutionGuid = {7B6D8ADF-4876-469B-9FF7-7DF18EB4C815}
 	EndGlobalSection
 EndGlobal

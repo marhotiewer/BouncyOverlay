@@ -1,58 +1,155 @@
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_syswm.h>
-#include <SDL2/SDL_mixer.h>
-#include <dwmapi.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+
 #include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <box2d/box2d.h>
+#include <glm/vec3.hpp>
+#include <iostream>
+#include <windows.h>
+#include <dwmapi.h>
 
-const int NUM_AUDIOS = 31;
-const int WINDOW_WIDTH = GetSystemMetrics(SM_CXSCREEN) - 1;
-const int WINDOW_HEIGHT = GetSystemMetrics(SM_CYSCREEN) - 1;
-const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
+const char* vertexShaderSource = R"(
+    #version 330 core
 
-GLint projectionMatrixLocation;
-GLint vertexColorLocation;
-glm::mat4 orthoMatrix;
+    uniform mat4 projection;      // projection matrix uniform
 
-const char* vertexSource2D = R"(
-    #version 460 core
-
-    uniform mat4 projectionMatrix; // Projection matrix uniform
-    uniform vec4 vertexColor;      // Uniform color for all vertices
-
-    layout (location = 0) in vec2 aPos;
-
-    out vec4 fragColor; // Output color to fragment shader
+    layout (location = 0) in vec2 aPos; // original position
+    layout (location = 1) in vec2 iPos; // instanced position
 
     void main()
     {
-        gl_Position = projectionMatrix * vec4(aPos, 0.0, 1.0);
-        fragColor = vertexColor; // Pass the uniform color to the fragment shader
+        gl_Position = projection * vec4(aPos + iPos, 0.0, 1.0);
     }
 )";
 
-const char* fragmentSource2D = R"(
-    #version 460 core
-    in vec4 fragColor; // Input color from vertex shader
+const char* fragmentShaderSource = R"(
+    #version 330 core
+
     out vec4 FragColor;
-    
+
     void main()
     {
-        FragColor = fragColor; // Use the input color as the fragment color
+        FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
     }
 )";
 
-HWND initTransparency(SDL_Window* window)
-{
-    // Get HWND handle from SDL_Window
-    SDL_SysWMinfo wmInfo{ 0 };
-    SDL_VERSION(&wmInfo.version);
-    SDL_GetWindowWMInfo(window, &wmInfo);
-    HWND hwnd = wmInfo.info.win.window;
+const int WINDOW_WIDTH = 2560;
+const int WINDOW_HEIGHT = 1440+1;
+const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
+bool WIREFRAME_ENABLED = false;
 
+struct BufferData
+{
+    const void* data;
+    size_t size;
+    GLenum usage;
+};
+
+struct VertexAttribute
+{
+    GLuint index;
+    GLint size;
+    GLenum type;
+    GLboolean normalized;
+    GLsizei stride;
+    const void* offset;
+};
+
+GLuint compileShader(char* vertexSource, char* fragSource)
+{
+    int  success;
+    char infoLog[512];
+
+    // Compile vertex shader
+    GLuint vertexShader;
+    vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexSource, NULL);
+    glCompileShader(vertexShader);
+
+    // Error checking
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
+        std::cout << "Error, vertex shader failed to compile:\n" << infoLog << std::endl;
+    }
+
+    // Compile fragment shader
+    GLuint fragmentShader;
+    fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragSource, NULL);
+    glCompileShader(fragmentShader);
+
+    // Error checking
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+        std::cout << "Error, fragment shader failed to compile:\n" << infoLog << std::endl;
+    }
+
+    // Create and link shader program
+    GLuint shaderProgram;
+    shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+
+    // Error checking
+    glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+        std::cout << "Error, shaders failed to link:\n" << infoLog << std::endl;
+    }
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    return shaderProgram;
+}
+
+void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
+    const BufferData& vertexBufferData,
+    const BufferData& indexBufferData,
+    const BufferData& instanceBufferData,
+    const VertexAttribute& vertexAttribute,
+    const VertexAttribute& instanceAttribute)
+{
+    // Generate and bind the Vertex Array Object
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+
+    // Generate and bind the Vertex Buffer Object
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertexBufferData.size, vertexBufferData.data, vertexBufferData.usage);
+
+    // Generate and bind the Index Buffer Object
+    glGenBuffers(1, &EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexBufferData.size, indexBufferData.data, indexBufferData.usage);
+
+    // Set up vertex attributes for the main vertex data
+    glVertexAttribPointer(vertexAttribute.index, vertexAttribute.size, vertexAttribute.type, vertexAttribute.normalized, vertexAttribute.stride, vertexAttribute.offset);
+    glEnableVertexAttribArray(vertexAttribute.index);
+
+    // Generate and bind the instance Vertex Buffer Object
+    glGenBuffers(1, &iVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, iVBO);
+    glBufferData(GL_ARRAY_BUFFER, instanceBufferData.size, instanceBufferData.data, instanceBufferData.usage);
+
+    // Set up vertex attributes for instance data
+    glVertexAttribPointer(instanceAttribute.index, instanceAttribute.size, instanceAttribute.type, instanceAttribute.normalized, instanceAttribute.stride, instanceAttribute.offset);
+    glEnableVertexAttribArray(instanceAttribute.index);
+    glVertexAttribDivisor(instanceAttribute.index, 1);
+
+    // Unbind the Vertex Array Object to avoid accidental modifications
+    glBindVertexArray(0);
+}
+
+void initTransparency(HWND hwnd)
+{
     // Enable transparency
     DWM_BLURBEHIND bb = { 0 };
     HRGN hRgn = CreateRectRgn(0, 0, -1, -1);
@@ -64,328 +161,99 @@ HWND initTransparency(SDL_Window* window)
     // Enable click through
     SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TRANSPARENT);
 
-    // Hide window from task bar and switcher
-    SetWindowLongPtr(hwnd, GWL_EXSTYLE, GetWindowLongPtr(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE);
-
     // Set window always on top
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
-
-    return hwnd;
 }
 
-HDC initOpenGL(HWND hwnd)
+float rndFloat(float lower, float upper)
 {
-    PIXELFORMATDESCRIPTOR pfd = {
-        sizeof(PIXELFORMATDESCRIPTOR),
-        1,                                // Version Number
-        PFD_DRAW_TO_WINDOW |              // Format Must Support Window
-        PFD_SUPPORT_OPENGL |              // Format Must Support OpenGL
-        PFD_DOUBLEBUFFER,                 // Must Support Double Buffering
-        PFD_TYPE_RGBA,                    // Request An RGBA Format
-        32,                               // Select Our Color Depth
-        0, 0, 0, 0, 0, 0,                 // Color Bits Ignored
-        8,                                // An Alpha Buffer
-        0,                                // Shift Bit Ignored
-        0,                                // No Accumulation Buffer
-        0, 0, 0, 0,                       // Accumulation Bits Ignored
-        24,                               // 16Bit Z-Buffer (Depth Buffer)
-        8,                                // Some Stencil Buffer
-        0,                                // No Auxiliary Buffer
-        PFD_MAIN_PLANE,                   // Main Drawing Layer
-        0,                                // Reserved
-        0, 0, 0                           // Layer Masks Ignored
-    };
+    float random = ((float)rand()) / RAND_MAX;
+    return lower + random * (upper - lower);
+}
 
-    HDC hdc = GetDC(hwnd);
-    INT pixelFormat = ChoosePixelFormat(hdc, &pfd);
-    SetPixelFormat(hdc, pixelFormat, &pfd);
-    HGLRC hrc = wglCreateContext(hdc);
-    wglMakeCurrent(hdc, hrc);
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+        if (WIREFRAME_ENABLED)
+        {
+            WIREFRAME_ENABLED = !WIREFRAME_ENABLED;
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
+        else
+        {
+            WIREFRAME_ENABLED = !WIREFRAME_ENABLED;
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        }
+    }
+}
+
+int main()
+{
+    glfwInit();
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); // This makes the window borderless
+    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "OpenGL", NULL, NULL);
+    glfwSetKeyCallback(window, keyCallback);
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(0);
     glewInit();
 
-    return hdc;
-}
+    HWND hwnd = glfwGetWin32Window(window);
+    initTransparency(hwnd);
 
-GLuint initShaders(char* vertex, char* fragment)
-{
-    // Compile shaders
-    GLuint vertexShader, fragmentShader;
-    vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-
-    glShaderSource(vertexShader, 1, &vertex, nullptr);
-    glShaderSource(fragmentShader, 1, &fragment, nullptr);
-
-    glCompileShader(vertexShader);
-    glCompileShader(fragmentShader);
-
-    // Link shaders into a shader program
-    GLuint shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
-
-    // Delete shaders after linking
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    return shaderProgram;
-}
-
-int randomNum(int lower, int upper)
-{
-    return lower + rand() % (upper - lower + 1);
-}
-
-struct Circle
-{
-    Circle(glm::vec3 color, int radius, glm::vec2 pos, b2World& world) : radius(radius), position(pos) {
-        generateVertices();
-        setupBuffers();
-        setupPhysics(world);
-
-        normColor.r = color.r / 255;
-        normColor.g = color.g / 255;
-        normColor.b = color.b / 255;
-    }
-    void generateVertices() {
-        float normRadius = (float)radius / WINDOW_HEIGHT * 2;
-        float normX = -ASPECT_RATIO + (2.0f * position.x / WINDOW_WIDTH) * ASPECT_RATIO;
-        float normY = 1.0f - (2.0f * position.y / WINDOW_HEIGHT);
-
-        vertices[0][0] = normX;
-        vertices[0][1] = normY;
-        for (int i = 1; i <= segments; i++) {
-            float theta = 2.0f * float(M_PI) * float(i - 1) / float(segments - 1);
-            vertices[i][0] = normX + normRadius * (float)cos(theta);
-            vertices[i][1] = normY + normRadius * (float)sin(theta);
-        }
-    }
-    void setupPhysics(b2World& world) {
-        b2BodyDef bodyDef;
-        bodyDef.type = b2_dynamicBody;
-        bodyDef.position.Set(position.x / 48.0f, position.y / 48.0f);
-
-        b2CircleShape circle;
-        circle.m_radius = radius / 48.0f;
-
-        b2FixtureDef fixtureDef;
-        fixtureDef.shape = &circle;
-        fixtureDef.density = 1.0f;
-        fixtureDef.friction = 1.0f;
-        fixtureDef.restitution = 0.75f;
-
-        body = world.CreateBody(&bodyDef);
-        body->CreateFixture(&fixtureDef);
-    }
-    void setupBuffers() {
-        glGenVertexArrays(1, &VAO);
-        glBindVertexArray(VAO);
-
-        glGenBuffers(1, &VBO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
-    void applyForce(b2Vec2 force) {
-        body->ApplyForce(force, body->GetPosition(), true);
-    }
-    void render() {
-        glUniform4f(vertexColorLocation, normColor.r, normColor.g, normColor.b, 1.0f);
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 1);
-        glBindVertexArray(0);
-    }
-    void update() {
-        b2Vec2 pos = body->GetPosition();
-        position.x = pos.x * 48.0f;
-        position.y = pos.y * 48.0f;
-        generateVertices();
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-    }
-private:
-    const int segments = 100;
-    float vertices[100+1][2];
-    glm::vec3 normColor;
-    glm::vec2 position;
-    GLuint VAO, VBO;
-    b2Body* body;
-    int radius;
-};
-
-struct Wall
-{
-    b2Body* body;
-    Wall(glm::vec2 pos, glm::vec2 size, b2World& world) {
-        b2BodyDef groundBodyDef;
-        groundBodyDef.position.Set(pos.x / 48.0f, pos.y / 48.0f);
-
-        b2PolygonShape groundBox;
-        groundBox.SetAsBox(0.5f * size.x / 48.0f, 0.5f * size.y / 48.0f);
-
-        body = world.CreateBody(&groundBodyDef);
-        body->CreateFixture(&groundBox, 0.0f);
-    }
-};
-
-Mix_Chunk** initAudio(const int NUM_AUDIOS)
-{
-    char filename[100];
-    Mix_Chunk** audios = new Mix_Chunk * [NUM_AUDIOS];
-
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0)
+    float vertices[] = {
+        0.01f,  0.01f,    // top right
+        0.01f, -0.01f,    // bottom right
+        -0.01f, -0.01f,   // bottom left
+        -0.01f,  0.01f    // top left
+    };
+    unsigned int indices[] = {
+        0, 1, 3,   // first triangle
+        1, 2, 3    // second triangle
+    };
+    int instances_index = 1000;
+    glm::vec2 instances[1000] = {};
+    for (size_t i = 0; i < instances_index; i++)
     {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SDL_mixer initialization failed", Mix_GetError(), NULL);
+        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
+        instances[i] = rndPos;
     }
-    for (int i = 0; i < NUM_AUDIOS; ++i)
+
+    VertexAttribute vertexAttr = { 0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0};
+    VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0};
+
+    BufferData vertexData = { vertices, sizeof(vertices), GL_STATIC_DRAW };
+    BufferData indexData = { indices, sizeof(indices), GL_STATIC_DRAW };
+    BufferData instanceData = { instances, sizeof(instances), GL_STATIC_DRAW };
+
+    GLuint VAO, VBO, iVBO, EBO;
+    
+    setupBuffers(VAO, VBO, iVBO, EBO, vertexData, indexData, instanceData, vertexAttr, instanceAttr);
+
+    GLuint shaderProgram = compileShader((char*)vertexShaderSource, (char*)fragmentShaderSource);
+    glUseProgram(shaderProgram);
+    glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+
+    while (!glfwWindowShouldClose(window))
     {
-        snprintf(filename, sizeof(filename), "audio/plop_%02d.wav", i + 1);
-        audios[i] = Mix_LoadWAV(filename);
-        if (!audios[i])
         {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Failed to load audio file", filename, NULL);
+            for (size_t i = 0; i < instances_index; i++)
+            {
+                glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
+                instances[i] = rndPos;
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, iVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(instances), instances);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
-    }
-    Mix_Volume(-1, MIX_MAX_VOLUME / 4);
-    return audios;
-}
-
-struct BatchRenderer
-{
-    GLint projectionMatrixUniform;
-    GLint vertexColorUniform;
-    GLuint shader, VAO, VBO;
-    glm::mat4 orthoMatrix;
-    glm::vec2* vertices;
-    int vertexCapacity;
-    int vertexCount;
-
-    BatchRenderer(int vertexCapacity) : vertexCapacity(vertexCapacity), vertexCount(0) {
-        glGenVertexArrays(1, &VAO);
-        glBindVertexArray(VAO);
-
-        glGenBuffers(1, &VBO);
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(glm::vec2) * vertexCapacity, NULL, GL_DYNAMIC_DRAW);
-
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(glm::vec2), (void*)0);
-
-        glEnableVertexAttribArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-
-        shader = initShaders((char*)vertexSource2D, (char*)fragmentSource2D);
-
-        projectionMatrixUniform = glGetUniformLocation(shader, "projectionMatrix");
-        vertexColorUniform = glGetUniformLocation(shader, "vertexColor");
-        orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
-        vertices = new glm::vec2[vertexCapacity];
-    }
-
-    void Render() {
-        glUseProgram(shader);
-        glUniform4f(vertexColorLocation, 1.0f, 0.0f, 1.0f, 1.0f);
-        glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-
-        glBindBuffer(GL_ARRAY_BUFFER, VBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::vec2) * vertexCount, vertices);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLE_FAN, 0, vertexCount);
-        glBindVertexArray(0);
-
-        vertexCount = 0;
-    }
-
-    void PushVertex(glm::vec2 vertex) {
-        vertices[vertexCount++] = vertex;
-    }
-};
-
-int main(int argc, char* argv[])
-{
-    SDL_Window* window          = SDL_CreateWindow("OpenGL", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_BORDERLESS);
-    HWND        hwnd            = initTransparency(window);
-    HDC         hdc             = initOpenGL(hwnd);
-    GLuint      shaderProgram   = initShaders((char*)vertexSource2D, (char*)fragmentSource2D);
-    Mix_Chunk** audios          = initAudio(NUM_AUDIOS);
-
-    // Set up orthographic view, we only do this once because the view wont get changed
-    projectionMatrixLocation = glGetUniformLocation(shaderProgram, "projectionMatrix");
-    vertexColorLocation = glGetUniformLocation(shaderProgram, "vertexColor");
-    orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
-
-    b2World world({ 0.0f, 0.0f });
-
-    Wall(glm::vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT + 5), glm::vec2(WINDOW_WIDTH, 10), world);
-    Wall(glm::vec2(WINDOW_WIDTH / 2, -5), glm::vec2(WINDOW_WIDTH, 10), world);
-    Wall(glm::vec2(-5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
-    Wall(glm::vec2(WINDOW_WIDTH + 5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
-
-    const int circles_size = 1000;
-    Circle* circles[circles_size] { 0 };
-    size_t circles_position = 0;
-
-    SDL_Event windowEvent;
-    float timePassed = 0.0f;
-    Uint32 prevTicks = SDL_GetTicks();
-
-    while (true)
-    {
-        Uint32 currentTicks = SDL_GetTicks();
-        float deltaTime = (currentTicks - prevTicks) / 1000.0f; // deltaTime in seconds
-        prevTicks = currentTicks;
-        timePassed += deltaTime;
-        
-        if (SDL_PollEvent(&windowEvent))
-        {
-            if (windowEvent.type == SDL_QUIT) break;
-        }
-        if (deltaTime < 1.0f / 60) {
-            world.Step(deltaTime, 6, 2);
-        }
-        if (circles_position < circles_size && timePassed > 0.01f)
-        {
-            glm::vec2   randomPosition(randomNum(50, WINDOW_WIDTH - 50), randomNum(50, WINDOW_HEIGHT - 50));
-            glm::vec3   randomColor(randomNum(0, 255), randomNum(0, 255), randomNum(0, 255));
-            b2Vec2      randomForce((float)randomNum(-1000, 1000), (float)randomNum(-1000, 1000));
-            int         randomRadius = randomNum(5, 25);
-            int         randomAudio = randomNum(0, NUM_AUDIOS-1);
-
-            circles[circles_position] = new Circle(randomColor, randomRadius, randomPosition, world);
-            circles[circles_position]->applyForce(randomForce);
-            Mix_PlayChannel(-1, audios[randomAudio], 0);
-
-            timePassed = 0.0f;
-            circles_position++;
-        }
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(shaderProgram);
-        glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-        for (size_t i = 0; i < circles_position; i++)
-        {
-            circles[i]->update();
-            circles[i]->render();
-        }
-        glFlush();
-        SwapBuffers(hdc);
+        glBindVertexArray(VAO);
+        glDrawElementsInstanced(GL_TRIANGLES, sizeof(indices) / sizeof(float), GL_UNSIGNED_INT, 0, instances_index);
+        glBindVertexArray(0);
+        glfwSwapBuffers(window);
+        glfwPollEvents();
     }
-    for (size_t i = 0; i < circles_position; i++) delete circles[i];
-    delete[] &circles;
-    for (int i = 0; i < NUM_AUDIOS; ++i) Mix_FreeChunk(audios[i]);
-    Mix_CloseAudio();
-    wglMakeCurrent(NULL, NULL);
-    wglDeleteContext(wglGetCurrentContext());
-    ReleaseDC(hwnd, hdc);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    glfwTerminate();
     return 0;
 }
