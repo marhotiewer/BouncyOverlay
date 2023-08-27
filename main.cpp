@@ -126,9 +126,8 @@ GLuint compileShader(char* vertexSource, char* fragSource)
     return shaderProgram;
 }
 
-void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
+void setupBuffers(GLuint& VAO, GLuint& VBO,
     const BufferData& vertexBufferData,
-    const BufferData& indexBufferData,
     const VertexAttribute& vertexAttribute)
 {
     // Generate and bind the Vertex Array Object
@@ -140,11 +139,6 @@ void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, vertexBufferData.size, vertexBufferData.data, vertexBufferData.usage);
 
-    // Generate and bind the Index Buffer Object
-    glGenBuffers(1, &EBO);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexBufferData.size, indexBufferData.data, indexBufferData.usage);
-
     // Set up vertex attributes for the main vertex data
     glVertexAttribPointer(vertexAttribute.index, vertexAttribute.size, vertexAttribute.type, vertexAttribute.normalized, vertexAttribute.stride, vertexAttribute.offset);
     glEnableVertexAttribArray(vertexAttribute.index);
@@ -153,8 +147,23 @@ void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
     glBindVertexArray(0);
 }
 
-GLuint createVBO(GLuint& VBO, const GLuint& VAO, const BufferData& bufferData, const VertexAttribute& vertexAttrib)
+void createEBO(GLuint& EBO, const GLuint& VAO, const BufferData& bufferData)
 {
+    // Bind the VAO
+    glBindVertexArray(VAO);
+
+    // Generate and bind the Index Buffer Object
+    glGenBuffers(1, &EBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, bufferData.size, bufferData.data, bufferData.usage);
+
+    // Unbind the Vertex Array Object to avoid accidental modifications
+    glBindVertexArray(0);
+}
+
+void createVBO(GLuint& VBO, const GLuint& VAO, const BufferData& bufferData, const VertexAttribute& vertexAttrib)
+{
+    // Bind the VAO
     glBindVertexArray(VAO);
 
     // Generate and bind the instance Vertex Buffer Object
@@ -167,8 +176,8 @@ GLuint createVBO(GLuint& VBO, const GLuint& VAO, const BufferData& bufferData, c
     glEnableVertexAttribArray(vertexAttrib.index);
     glVertexAttribDivisor(vertexAttrib.index, 1);
 
+    // Unbind the Vertex Array Object to avoid accidental modifications
     glBindVertexArray(0);
-    return VBO;
 }
 
 void initTransparency(HWND hwnd)
@@ -257,11 +266,14 @@ int main()
 
     GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO;
     
-    // Create VAO and two VBOs for vertices and indices
+    // Create VAO and VBO for vertices and indices
     VertexAttribute vertexAttr = { 0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
     BufferData vertexData = { vertices, sizeof(vertices), GL_STATIC_DRAW };
+    setupBuffers(VAO, VBO, vertexData, vertexAttr);
+
+    // Create indices buffer
     BufferData indexData = { indices, sizeof(indices), GL_STATIC_DRAW };
-    setupBuffers(VAO, VBO, iPosVBO, EBO, vertexData, indexData, vertexAttr);
+    createEBO(EBO, VAO, indexData);
 
     // Create VBO for instance positions
     VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
