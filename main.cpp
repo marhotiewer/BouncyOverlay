@@ -53,8 +53,8 @@ const char* fragmentShaderSource = R"(
     }
 )";
 
-const int WINDOW_WIDTH = 2560;
-const int WINDOW_HEIGHT = 1440+1;
+const int WINDOW_WIDTH = 1920;
+const int WINDOW_HEIGHT = 1080;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
 bool WIREFRAME_ENABLED = false;
 
@@ -194,6 +194,14 @@ float rndFloat(float lower, float upper)
     return lower + random * (upper - lower);
 }
 
+double getDeltaTima(double& lastFrameTime)
+{
+    double currentFrameTime = glfwGetTime();
+    double deltaTime = currentFrameTime - lastFrameTime;
+    lastFrameTime = currentFrameTime;
+    return deltaTime;
+}
+
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
@@ -213,15 +221,13 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 int main()
 {
     glfwInit();
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); // This makes the window borderless
+    //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "OpenGL", NULL, NULL);
     glfwSetKeyCallback(window, keyCallback);
     glfwMakeContextCurrent(window);
-    glfwSwapInterval(0);
+    //glfwSwapInterval(0);
+    //initTransparency(glfwGetWin32Window(window));
     glewInit();
-
-    HWND hwnd = glfwGetWin32Window(window);
-    initTransparency(hwnd);
 
     float vertices[] = {
         1.0f,  1.0f,    // top right
@@ -234,19 +240,19 @@ int main()
         1, 2, 3    // second triangle
     };
     
-    const int instances_index = 1000;
+    const int instances_index = 10;
     glm::vec2* instances = new glm::vec2[instances_index];
     glm::vec3* instance_colors = new glm::vec3[instances_index];
     glm::vec3* instance_models = new glm::vec3[instances_index];
 
     for (size_t i = 0; i < instances_index; i++)
     {
-        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
-        glm::vec3 rndModel(0.01f, 0.01f, rndFloat(0.0f, 1.0f));
+        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO + 0.2f, ASPECT_RATIO - 0.2f), rndFloat(-0.8f, 0.8f));
         glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
+
+        instance_models[i] = glm::vec3(0.1f, 0.1f, 0.0f);
         instances[i] = rndPos;
         instance_colors[i] = rndCol;
-        instance_models[i] = rndModel;
     }
 
     GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO;
@@ -277,26 +283,19 @@ int main()
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
 
+    float rotationAngle = 0.0f;             // Initial rotation angle
+    float rotationSpeed = 1.0f;             // Adjust as needed (radians per second)
+    double lastFrameTime = glfwGetTime();   // Get initial time
+
     while (!glfwWindowShouldClose(window))
     {
         {
+            rotationAngle += (rotationSpeed * (float)getDeltaTima(lastFrameTime));
+            if (rotationAngle >= 2.0f * glm::pi<float>()) rotationAngle -= 2.0f * glm::pi<float>();
             for (size_t i = 0; i < instances_index; i++)
             {
-                glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
-                glm::vec3 rndModel(0.01f, 0.01f, rndFloat(0.0f, 1.0f));
-                glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
-                instances[i] = rndPos;
-                instance_colors[i] = rndCol;
-                instance_models[i] = rndModel;
+                instance_models[i].z = rotationAngle;
             }
-            glBindBuffer(GL_ARRAY_BUFFER, iPosVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (2 * sizeof(float)), instances);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-            glBindBuffer(GL_ARRAY_BUFFER, iColorVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (3 * sizeof(float)), instance_colors);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-
             glBindBuffer(GL_ARRAY_BUFFER, iModelVBO);
             glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (3 * sizeof(float)), instance_models);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
