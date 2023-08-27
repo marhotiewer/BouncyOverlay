@@ -11,16 +11,15 @@
 #include <windows.h>
 #include <dwmapi.h>
 
-const char* vertexShaderSource = R"(
+const char* vertexRectangleSource = R"(
     #version 330 core
 
     uniform mat4 projection;                // projection matrix uniform
 
-    layout (location = 0) in vec2 inPos;     // original position
-
+    layout (location = 0) in vec2 basePos;  // original position
     layout (location = 1) in vec2 iPos;     // instanced position
     layout (location = 2) in vec3 iColor;   // instanced color
-    layout (location = 3) in vec3 iModel;   // instanced color
+    layout (location = 3) in vec3 iModel;   // instanced model
 
     out vec3 vColorOut; 
 
@@ -35,13 +34,13 @@ const char* vertexShaderSource = R"(
         vec2 scale = vec2(iModel.x, iModel.y);
         float radians = iModel.z;
 
-        vec2 newPos = rotationMatrix(radians) * (inPos * scale);
+        vec2 newPos = rotationMatrix(radians) * (basePos * scale);
         gl_Position = projection * vec4(newPos + iPos, 0.0, 1.0);
         vColorOut = iColor;
     }
 )";
 
-const char* fragmentShaderSource = R"(
+const char* fragmentRectangleSource = R"(
     #version 330 core
 
     in vec3 vColorOut;
@@ -53,10 +52,68 @@ const char* fragmentShaderSource = R"(
     }
 )";
 
+const char* vertexCircleSource = R"(
+    #version 330 core
+
+    uniform mat4 projection;                // projection matrix uniform
+
+    layout (location = 0) in vec2 basePos;  // original position
+    layout (location = 1) in vec2 iPos;     // instanced position
+    layout (location = 2) in vec3 iColor;   // instanced color
+    layout (location = 3) in vec3 iModel;   // instanced model
+
+    out vec3 iColorOut; 
+    out vec2 iPosOut;
+    out float iRadiusOut;
+
+    mat2 rotationMatrix(float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        return mat2(c, -s, s, c);
+    }
+
+    void main()
+    {
+        vec2 scale = vec2(iModel.x, iModel.x);
+        float radians = iModel.z;
+
+        vec2 newPos = rotationMatrix(radians) * (basePos * scale);
+        gl_Position = projection * vec4(newPos + iPos, 0.0, 1.0);
+
+        iColorOut = iColor;
+        iPosOut = iPos;
+        iRadiusOut = iModel.x;
+    }
+)";
+
+const char* fragmentCircleSource = R"(
+    #version 330 core
+
+    uniform vec2 resolution;
+
+    in vec3 iColorOut;
+    in vec2 iPosOut;
+    in float iRadiusOut;
+
+    out vec4 FragColor;
+
+    void main()
+    {
+        // Convert current fragment pixel coordinates to normalized coordinates
+        vec2 normalizedCoords = (2.0 * gl_FragCoord.xy - resolution) / resolution;
+        normalizedCoords.x *= resolution.x / resolution.y;
+        
+        // Dont render the pixel if the position is outside of the circle radius
+        if (length(normalizedCoords - iPosOut) > iRadiusOut) {
+            discard;
+        }
+        FragColor = vec4(iColorOut, 1.0f);
+    }
+)";
+
 const int WINDOW_WIDTH = 1920;
 const int WINDOW_HEIGHT = 1080;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
-bool WIREFRAME_ENABLED = false;
 
 struct BufferData
 {
@@ -211,9 +268,16 @@ double getDeltaTima(double& lastFrameTime)
     return deltaTime;
 }
 
+GLuint circleShader;
+GLuint rectangleShader;
+GLuint activeShader;
+
+bool WIREFRAME_ENABLED = false;
+
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
+    {
         if (WIREFRAME_ENABLED)
         {
             WIREFRAME_ENABLED = !WIREFRAME_ENABLED;
@@ -224,6 +288,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             WIREFRAME_ENABLED = !WIREFRAME_ENABLED;
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         }
+    }
+    if (key == GLFW_KEY_T && action == GLFW_PRESS)
+    {
+        if (activeShader != rectangleShader) activeShader = rectangleShader;
+        else activeShader = circleShader;
     }
 }
 
@@ -249,17 +318,17 @@ int main()
         1, 2, 3    // second triangle
     };
     
-    const int instances_index = 10;
+    const int instances_index = 1000;
     glm::vec2* instances = new glm::vec2[instances_index];
     glm::vec3* instance_colors = new glm::vec3[instances_index];
     glm::vec3* instance_models = new glm::vec3[instances_index];
 
     for (size_t i = 0; i < instances_index; i++)
     {
-        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO + 0.2f, ASPECT_RATIO - 0.2f), rndFloat(-0.8f, 0.8f));
+        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
         glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
 
-        instance_models[i] = glm::vec3(0.1f, 0.1f, 0.0f);
+        instance_models[i] = glm::vec3(0.05f, 0.05f, 0.0f);
         instances[i] = rndPos;
         instance_colors[i] = rndCol;
     }
@@ -290,10 +359,18 @@ int main()
     BufferData scaleData = { instance_models, instances_index * (3 * sizeof(float)), GL_STATIC_DRAW };
     createVBO(iModelVBO, VAO, scaleData, scaleAttr);
 
-    GLuint shaderProgram = compileShader((char*)vertexShaderSource, (char*)fragmentShaderSource);
-    glUseProgram(shaderProgram);
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+
+    circleShader = compileShader((char*)vertexCircleSource, (char*)fragmentCircleSource);
+    rectangleShader = compileShader((char*)vertexRectangleSource, (char*)fragmentRectangleSource);
+
+    glUseProgram(circleShader);
+    glUniformMatrix4fv(glGetUniformLocation(circleShader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+    glUniform2f(glGetUniformLocation(circleShader, "resolution"), WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    glUseProgram(rectangleShader);
+    glUniformMatrix4fv(glGetUniformLocation(rectangleShader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+    activeShader = rectangleShader;
 
     float rotationAngle = 0.0f;             // Initial rotation angle
     float rotationSpeed = 1.0f;             // Adjust as needed (radians per second)
@@ -313,7 +390,7 @@ int main()
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(shaderProgram);
+        glUseProgram(activeShader);
         glBindVertexArray(VAO);
         glDrawElementsInstanced(GL_TRIANGLES, sizeof(indices) / sizeof(float), GL_UNSIGNED_INT, 0, instances_index);
         glBindVertexArray(0);
