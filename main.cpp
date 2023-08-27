@@ -14,25 +14,42 @@
 const char* vertexShaderSource = R"(
     #version 330 core
 
-    uniform mat4 projection;      // projection matrix uniform
+    uniform mat4 projection;                // projection matrix uniform
 
-    layout (location = 0) in vec2 aPos; // original position
-    layout (location = 1) in vec2 iPos; // instanced position
+    layout (location = 0) in vec2 inPos;     // original position
+
+    layout (location = 1) in vec2 iPos;     // instanced position
+    layout (location = 2) in vec3 iColor;   // instanced color
+    layout (location = 3) in vec3 iModel;   // instanced color
+
+    out vec3 vColorOut; 
+
+    mat2 rotationMatrix(float angle) {
+        float s = sin(angle);
+        float c = cos(angle);
+        return mat2(c, -s, s, c);
+    }
 
     void main()
     {
-        gl_Position = projection * vec4(aPos + iPos, 0.0, 1.0);
+        vec2 scale = vec2(iModel.x, iModel.y);
+        float radians = iModel.z;
+
+        vec2 newPos = rotationMatrix(radians) * (inPos * scale);
+        gl_Position = projection * vec4(newPos + iPos, 0.0, 1.0);
+        vColorOut = iColor;
     }
 )";
 
 const char* fragmentShaderSource = R"(
     #version 330 core
 
+    in vec3 vColorOut;
     out vec4 FragColor;
 
     void main()
     {
-        FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
+        FragColor = vec4(vColorOut, 1.0f);
     }
 )";
 
@@ -112,9 +129,7 @@ GLuint compileShader(char* vertexSource, char* fragSource)
 void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
     const BufferData& vertexBufferData,
     const BufferData& indexBufferData,
-    const BufferData& instanceBufferData,
-    const VertexAttribute& vertexAttribute,
-    const VertexAttribute& instanceAttribute)
+    const VertexAttribute& vertexAttribute)
 {
     // Generate and bind the Vertex Array Object
     glGenVertexArrays(1, &VAO);
@@ -134,18 +149,26 @@ void setupBuffers(GLuint& VAO, GLuint& VBO, GLuint& iVBO, GLuint& EBO,
     glVertexAttribPointer(vertexAttribute.index, vertexAttribute.size, vertexAttribute.type, vertexAttribute.normalized, vertexAttribute.stride, vertexAttribute.offset);
     glEnableVertexAttribArray(vertexAttribute.index);
 
-    // Generate and bind the instance Vertex Buffer Object
-    glGenBuffers(1, &iVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, iVBO);
-    glBufferData(GL_ARRAY_BUFFER, instanceBufferData.size, instanceBufferData.data, instanceBufferData.usage);
-
-    // Set up vertex attributes for instance data
-    glVertexAttribPointer(instanceAttribute.index, instanceAttribute.size, instanceAttribute.type, instanceAttribute.normalized, instanceAttribute.stride, instanceAttribute.offset);
-    glEnableVertexAttribArray(instanceAttribute.index);
-    glVertexAttribDivisor(instanceAttribute.index, 1);
-
     // Unbind the Vertex Array Object to avoid accidental modifications
     glBindVertexArray(0);
+}
+
+GLuint createVBO(GLuint& VBO, const GLuint& VAO, const BufferData& bufferData, const VertexAttribute& vertexAttrib)
+{
+    glBindVertexArray(VAO);
+
+    // Generate and bind the instance Vertex Buffer Object
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, bufferData.size, bufferData.data, bufferData.usage);
+
+    // Set up vertex attributes for instance data
+    glVertexAttribPointer(vertexAttrib.index, vertexAttrib.size, vertexAttrib.type, vertexAttrib.normalized, vertexAttrib.stride, vertexAttrib.offset);
+    glEnableVertexAttribArray(vertexAttrib.index);
+    glVertexAttribDivisor(vertexAttrib.index, 1);
+
+    glBindVertexArray(0);
+    return VBO;
 }
 
 void initTransparency(HWND hwnd)
@@ -201,33 +224,53 @@ int main()
     initTransparency(hwnd);
 
     float vertices[] = {
-        0.01f,  0.01f,    // top right
-        0.01f, -0.01f,    // bottom right
-        -0.01f, -0.01f,   // bottom left
-        -0.01f,  0.01f    // top left
+        1.0f,  1.0f,    // top right
+        1.0f, -1.0f,    // bottom right
+        -1.0f, -1.0f,   // bottom left
+        -1.0f,  1.0f    // top left
     };
     unsigned int indices[] = {
         0, 1, 3,   // first triangle
         1, 2, 3    // second triangle
     };
-    int instances_index = 1000;
-    glm::vec2 instances[1000] = {};
+    
+    const int instances_index = 1000;
+    glm::vec2* instances = new glm::vec2[instances_index];
+    glm::vec3* instance_colors = new glm::vec3[instances_index];
+    glm::vec3* instance_models = new glm::vec3[instances_index];
+
     for (size_t i = 0; i < instances_index; i++)
     {
         glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
+        glm::vec3 rndModel(0.01f, 0.01f, rndFloat(0.0f, 1.0f));
+        glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
         instances[i] = rndPos;
+        instance_colors[i] = rndCol;
+        instance_models[i] = rndModel;
     }
 
-    VertexAttribute vertexAttr = { 0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0};
-    VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0};
-
+    GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO;
+    
+    // Create VAO and two VBOs for vertices and indices
+    VertexAttribute vertexAttr = { 0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
     BufferData vertexData = { vertices, sizeof(vertices), GL_STATIC_DRAW };
     BufferData indexData = { indices, sizeof(indices), GL_STATIC_DRAW };
-    BufferData instanceData = { instances, sizeof(instances), GL_STATIC_DRAW };
+    setupBuffers(VAO, VBO, iPosVBO, EBO, vertexData, indexData, vertexAttr);
 
-    GLuint VAO, VBO, iVBO, EBO;
-    
-    setupBuffers(VAO, VBO, iVBO, EBO, vertexData, indexData, instanceData, vertexAttr, instanceAttr);
+    // Create VBO for instance positions
+    VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
+    BufferData instanceData = { instances, instances_index * (2 * sizeof(float)), GL_STATIC_DRAW };
+    createVBO(iPosVBO, VAO, instanceData, instanceAttr);
+
+    // Create VBO for instance colors
+    VertexAttribute colorAttr = { 2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0 };
+    BufferData colorData = { instance_colors, instances_index * (3 * sizeof(float)), GL_STATIC_DRAW};
+    createVBO(iColorVBO, VAO, colorData, colorAttr);
+
+    // Create VBO for instance models
+    VertexAttribute scaleAttr = { 3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0 };
+    BufferData scaleData = { instance_models, instances_index * (3 * sizeof(float)), GL_STATIC_DRAW };
+    createVBO(iModelVBO, VAO, scaleData, scaleAttr);
 
     GLuint shaderProgram = compileShader((char*)vertexShaderSource, (char*)fragmentShaderSource);
     glUseProgram(shaderProgram);
@@ -240,10 +283,22 @@ int main()
             for (size_t i = 0; i < instances_index; i++)
             {
                 glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
+                glm::vec3 rndModel(0.01f, 0.01f, rndFloat(0.0f, 1.0f));
+                glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
                 instances[i] = rndPos;
+                instance_colors[i] = rndCol;
+                instance_models[i] = rndModel;
             }
-            glBindBuffer(GL_ARRAY_BUFFER, iVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(instances), instances);
+            glBindBuffer(GL_ARRAY_BUFFER, iPosVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (2 * sizeof(float)), instances);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            glBindBuffer(GL_ARRAY_BUFFER, iColorVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (3 * sizeof(float)), instance_colors);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            glBindBuffer(GL_ARRAY_BUFFER, iModelVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (3 * sizeof(float)), instance_models);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         glClear(GL_COLOR_BUFFER_BIT);
