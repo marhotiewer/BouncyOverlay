@@ -11,62 +11,23 @@
 #include <windows.h>
 #include <dwmapi.h>
 
-const char* vertexRectangleSource = R"(
-    #version 330 core
-
-    uniform mat4 projection;                // projection matrix uniform
-
-    layout (location = 0) in vec2 basePos;  // original position
-    layout (location = 1) in vec2 iPos;     // instanced position
-    layout (location = 2) in vec3 iColor;   // instanced color
-    layout (location = 3) in vec3 iModel;   // instanced model
-
-    out vec3 vColorOut; 
-
-    mat2 rotationMatrix(float angle) {
-        float s = sin(angle);
-        float c = cos(angle);
-        return mat2(c, -s, s, c);
-    }
-
-    void main()
-    {
-        vec2 scale = vec2(iModel.x, iModel.y);
-        float radians = iModel.z;
-
-        vec2 newPos = rotationMatrix(radians) * (basePos * scale);
-        gl_Position = projection * vec4(newPos + iPos, 0.0, 1.0);
-        vColorOut = iColor;
-    }
-)";
-
-const char* fragmentRectangleSource = R"(
-    #version 330 core
-
-    in vec3 vColorOut;
-    out vec4 FragColor;
-
-    void main()
-    {
-        FragColor = vec4(vColorOut, 1.0f);
-    }
-)";
-
 const char* vertexCircleSource = R"(
     #version 330 core
 
-    uniform mat4 projection;                // projection matrix uniform
+    uniform mat4                    projection;  // projection matrix uniform
 
-    layout (location = 0) in vec2 basePos;  // original position
-    layout (location = 1) in vec2 iPos;     // instanced position
-    layout (location = 2) in vec3 iColor;   // instanced color
-    layout (location = 3) in vec3 iModel;   // instanced model
+    layout (location = 0) in vec2   basePos;     // original position
+    layout (location = 1) in vec2   iPos;        // instanced position
+    layout (location = 3) in vec2   iScale;      // instanced scale
+    layout (location = 2) in vec3   iColor;      // instanced color
+    layout (location = 4) in float  iAngle;      // instanced angle
 
-    out vec3 iColorOut; 
-    out vec2 iPosOut;
-    out float iRadiusOut;
+    out vec2 vPosOut;
+    out vec2 vScaleOut;
+    out vec3 vColorOut;
 
-    mat2 rotationMatrix(float angle) {
+    mat2 rotationMatrix(float angle)
+    {
         float s = sin(angle);
         float c = cos(angle);
         return mat2(c, -s, s, c);
@@ -74,15 +35,19 @@ const char* vertexCircleSource = R"(
 
     void main()
     {
-        vec2 scale = vec2(iModel.x, iModel.x);
-        float radians = iModel.z;
+        vec2 scale;
 
-        vec2 newPos = rotationMatrix(radians) * (basePos * scale);
+        // if the height of the rectangle is set to 0.0 set the height to equal the width in preperation for rendering as a circle
+        if(iScale.y == 0.0) scale = vec2(iScale.x, iScale.x);
+        else                scale = iScale;
+
+        // apply rotation and projection maxtrix
+        vec2 newPos = rotationMatrix(iAngle) * (basePos * scale);
         gl_Position = projection * vec4(newPos + iPos, 0.0, 1.0);
 
-        iColorOut = iColor;
-        iPosOut = iPos;
-        iRadiusOut = iModel.x;
+        vPosOut     = iPos;
+        vScaleOut   = iScale;
+        vColorOut   = iColor;
     }
 )";
 
@@ -91,29 +56,35 @@ const char* fragmentCircleSource = R"(
 
     uniform vec2 resolution;
 
-    in vec3 iColorOut;
-    in vec2 iPosOut;
-    in float iRadiusOut;
+    in vec3 vColorOut;
+    in vec2 vScaleOut;
+    in vec2 vPosOut;
 
     out vec4 FragColor;
 
     void main()
     {
-        // Convert current fragment pixel coordinates to normalized coordinates
-        vec2 normalizedCoords = (2.0 * gl_FragCoord.xy - resolution) / resolution;
-        normalizedCoords.x *= resolution.x / resolution.y;
+        // if the height of the square is 0.0 render as circle
+        if(vScaleOut.y == 0.0)
+        {
+            float radius    = vScaleOut.x;
+            vec2  centerPos = vPosOut;
+
+            // convert current fragment pixel coordinates to normalized coordinates
+            vec2 pixelPos = (2.0 * gl_FragCoord.xy - resolution) / resolution;
+            pixelPos.x *= resolution.x / resolution.y;
         
-        // Dont render the pixel if the position is outside of the circle radius
-        if (length(normalizedCoords - iPosOut) > iRadiusOut) {
-            discard;
+            // dont render the pixel if the position is outside of the circle radius
+            if (length(pixelPos - centerPos) > radius) discard;
         }
-        FragColor = vec4(iColorOut, 1.0f);
+        FragColor = vec4(vColorOut, 1.0f);
     }
 )";
 
-const int WINDOW_WIDTH = 1920;
-const int WINDOW_HEIGHT = 1080;
+const int   WINDOW_WIDTH = 1920;
+const int   WINDOW_HEIGHT = 1080;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
+bool        WIREFRAME_ENABLED = false;
 
 struct BufferData
 {
@@ -130,6 +101,13 @@ struct VertexAttribute
     GLboolean normalized;
     GLsizei stride;
     const void* offset;
+};
+
+struct InstanceData {
+    glm::vec2 position;
+    glm::vec2 scale;
+    glm::vec3 color;
+    GLfloat angle;
 };
 
 GLuint compileShader(char* vertexSource, char* fragSource)
@@ -260,6 +238,11 @@ float rndFloat(float lower, float upper)
     return lower + random * (upper - lower);
 }
 
+bool rndBool()
+{
+    return rand() & 1;
+}
+
 double getDeltaTima(double& lastFrameTime)
 {
     double currentFrameTime = glfwGetTime();
@@ -267,12 +250,6 @@ double getDeltaTima(double& lastFrameTime)
     lastFrameTime = currentFrameTime;
     return deltaTime;
 }
-
-GLuint circleShader;
-GLuint rectangleShader;
-GLuint activeShader;
-
-bool WIREFRAME_ENABLED = false;
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -289,11 +266,6 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
         }
     }
-    if (key == GLFW_KEY_T && action == GLFW_PRESS)
-    {
-        if (activeShader != rectangleShader) activeShader = rectangleShader;
-        else activeShader = circleShader;
-    }
 }
 
 int main()
@@ -303,7 +275,7 @@ int main()
     GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "OpenGL", NULL, NULL);
     glfwSetKeyCallback(window, keyCallback);
     glfwMakeContextCurrent(window);
-    //glfwSwapInterval(0);
+    glfwSwapInterval(0);
     //initTransparency(glfwGetWin32Window(window));
     glewInit();
 
@@ -318,22 +290,25 @@ int main()
         1, 2, 3    // second triangle
     };
     
-    const int instances_index = 1000;
-    glm::vec2* instances = new glm::vec2[instances_index];
-    glm::vec3* instance_colors = new glm::vec3[instances_index];
-    glm::vec3* instance_models = new glm::vec3[instances_index];
+    const int instances_index = 100;
+    InstanceData* instances = new InstanceData[instances_index];
 
     for (size_t i = 0; i < instances_index; i++)
     {
-        glm::vec2 rndPos(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
-        glm::vec3 rndCol(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
+        glm::vec2 position(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
+        glm::vec3 color(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
+        glm::vec2 scale = (rndBool()) ? glm::vec2(0.025f, 0.0f) : glm::vec2(0.025f, 0.025f);
+        float angle = 0.0f;
 
-        instance_models[i] = glm::vec3(0.05f, 0.05f, 0.0f);
-        instances[i] = rndPos;
-        instance_colors[i] = rndCol;
+        instances[i] = {
+            position,
+            scale,
+            color,
+            angle
+        };
     }
 
-    GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO;
+    GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO, iAngleVBO;
     
     // Create VAO and VBO for vertices and indices
     VertexAttribute vertexAttr = { 0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
@@ -345,32 +320,32 @@ int main()
     createEBO(EBO, VAO, indexData);
 
     // Create VBO for instance positions
-    VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0 };
-    BufferData instanceData = { instances, instances_index * (2 * sizeof(float)), GL_STATIC_DRAW };
+    VertexAttribute instanceAttr = { 1, 2, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, position) };
+    BufferData instanceData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW };
     createVBO(iPosVBO, VAO, instanceData, instanceAttr);
 
     // Create VBO for instance colors
-    VertexAttribute colorAttr = { 2, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0 };
-    BufferData colorData = { instance_colors, instances_index * (3 * sizeof(float)), GL_STATIC_DRAW};
+    VertexAttribute colorAttr = { 2, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, color) };
+    BufferData colorData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW};
     createVBO(iColorVBO, VAO, colorData, colorAttr);
 
     // Create VBO for instance models
-    VertexAttribute scaleAttr = { 3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0 };
-    BufferData scaleData = { instance_models, instances_index * (3 * sizeof(float)), GL_STATIC_DRAW };
+    VertexAttribute scaleAttr = { 3, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, scale) };
+    BufferData scaleData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW };
     createVBO(iModelVBO, VAO, scaleData, scaleAttr);
+
+    // Create VBO for instance angles
+    VertexAttribute angleAttr = { 4, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, angle) };
+    BufferData angleData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW };
+    createVBO(iAngleVBO, VAO, angleData, angleAttr);
 
     glm::mat4 orthoMatrix = glm::ortho(-ASPECT_RATIO, ASPECT_RATIO, -1.0f, 1.0f, -1.0f, 1.0f);
 
-    circleShader = compileShader((char*)vertexCircleSource, (char*)fragmentCircleSource);
-    rectangleShader = compileShader((char*)vertexRectangleSource, (char*)fragmentRectangleSource);
-
-    glUseProgram(circleShader);
-    glUniformMatrix4fv(glGetUniformLocation(circleShader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-    glUniform2f(glGetUniformLocation(circleShader, "resolution"), WINDOW_WIDTH, WINDOW_HEIGHT);
-
-    glUseProgram(rectangleShader);
-    glUniformMatrix4fv(glGetUniformLocation(rectangleShader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
-    activeShader = rectangleShader;
+    GLuint shader = compileShader((char*)vertexCircleSource, (char*)fragmentCircleSource);
+    
+    glUseProgram(shader);
+    glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
+    glUniform2f(glGetUniformLocation(shader, "resolution"), WINDOW_WIDTH, WINDOW_HEIGHT);
 
     float rotationAngle = 0.0f;             // Initial rotation angle
     float rotationSpeed = 1.0f;             // Adjust as needed (radians per second)
@@ -383,14 +358,19 @@ int main()
             if (rotationAngle >= 2.0f * glm::pi<float>()) rotationAngle -= 2.0f * glm::pi<float>();
             for (size_t i = 0; i < instances_index; i++)
             {
-                instance_models[i].z = rotationAngle;
+                instances[i].angle = rotationAngle;
+                instances[i].position = glm::vec2(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
             }
-            glBindBuffer(GL_ARRAY_BUFFER, iModelVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * (3 * sizeof(float)), instance_models);
+            glBindBuffer(GL_ARRAY_BUFFER, iAngleVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+            glBindBuffer(GL_ARRAY_BUFFER, iPosVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
         glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(activeShader);
+        glUseProgram(shader);
         glBindVertexArray(VAO);
         glDrawElementsInstanced(GL_TRIANGLES, sizeof(indices) / sizeof(float), GL_UNSIGNED_INT, 0, instances_index);
         glBindVertexArray(0);
