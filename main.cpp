@@ -10,11 +10,13 @@
 #include <iostream>
 #include <windows.h>
 #include <dwmapi.h>
+#include <box2d/box2d.h>
 
 const char* vertexCircleSource = R"(
     #version 330 core
 
     uniform mat4                    projection;  // projection matrix uniform
+    uniform vec2                    resolution;
 
     layout (location = 0) in vec2   basePos;     // original position
     layout (location = 1) in vec2   iPos;        // instanced position
@@ -62,6 +64,13 @@ const char* fragmentCircleSource = R"(
 
     out vec4 FragColor;
 
+    vec2 pixelToNormalized(vec2 pixel, vec2 screensize)
+    {
+        vec2 normalized = (2.0 * pixel - screensize) / screensize;
+        normalized.x *= screensize.x / screensize.y;
+        return normalized;
+    }
+
     void main()
     {
         // if the height of the square is 0.0 render as circle
@@ -71,8 +80,7 @@ const char* fragmentCircleSource = R"(
             vec2  centerPos = vPosOut;
 
             // convert current fragment pixel coordinates to normalized coordinates
-            vec2 pixelPos = (2.0 * gl_FragCoord.xy - resolution) / resolution;
-            pixelPos.x *= resolution.x / resolution.y;
+            vec2 pixelPos = pixelToNormalized(gl_FragCoord.xy, resolution);
         
             // dont render the pixel if the position is outside of the circle radius
             if (length(pixelPos - centerPos) > radius) discard;
@@ -84,6 +92,7 @@ const char* fragmentCircleSource = R"(
 const int   WINDOW_WIDTH = 1920;
 const int   WINDOW_HEIGHT = 1080;
 const float ASPECT_RATIO = (float)WINDOW_WIDTH / (float)WINDOW_HEIGHT;
+const float BOX2D_SCALE = WINDOW_WIDTH / 40;
 bool        WIREFRAME_ENABLED = false;
 
 struct BufferData
@@ -268,6 +277,63 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     }
 }
 
+b2Body* createWall(glm::vec2 pos, glm::vec2 size, b2World& world) {
+    b2BodyDef groundBodyDef;
+    groundBodyDef.position.Set(pos.x / BOX2D_SCALE, pos.y / BOX2D_SCALE);
+
+    b2PolygonShape groundBox;
+    groundBox.SetAsBox(0.5f * size.x / BOX2D_SCALE, 0.5f * size.y / BOX2D_SCALE);
+
+    b2Body* body = world.CreateBody(&groundBodyDef);
+    body->CreateFixture(&groundBox, 0.0f);
+    return body;
+}
+
+b2Body* createBall(glm::vec2 position, float radius, b2World& world) {
+    b2BodyDef bodyDef;
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.position.Set(position.x / BOX2D_SCALE, position.y / BOX2D_SCALE);
+
+    b2CircleShape circle;
+    circle.m_radius = radius / BOX2D_SCALE;
+
+    b2FixtureDef fixtureDef;
+    fixtureDef.shape = &circle;
+    fixtureDef.density = 1.0f;
+    fixtureDef.friction = 1.0f;
+    fixtureDef.restitution = 0.75f;
+
+    b2Body* body = world.CreateBody(&bodyDef);
+    body->CreateFixture(&fixtureDef);
+    return body;
+}
+
+b2Body* createRectangle(glm::vec2 position, glm::vec2 size, b2World& world) {
+    b2BodyDef bodyDef;
+    bodyDef.type = b2_dynamicBody;
+    bodyDef.position.Set(position.x / BOX2D_SCALE, position.y / BOX2D_SCALE);
+
+    b2PolygonShape box;
+    box.SetAsBox(size.x / 96.0f, size.y / 96.0f); // Dividing by 96.0f for half-extents
+
+    b2FixtureDef fixtureDef;
+    fixtureDef.shape = &box;
+    fixtureDef.density = 1.0f;
+    fixtureDef.friction = 1.0f;
+    fixtureDef.restitution = 0.75f;
+
+    b2Body* body = world.CreateBody(&bodyDef);
+    body->CreateFixture(&fixtureDef);
+    return body;
+}
+
+
+glm::vec2 pixelToNormalized(float x, float y) {
+    float normalizedX = -ASPECT_RATIO + (2.0f * x / WINDOW_WIDTH) * ASPECT_RATIO;
+    float normalizedY = 1.0f - (2.0f * y / WINDOW_HEIGHT);
+    return glm::vec2(normalizedX, normalizedY);
+}
+
 int main()
 {
     glfwInit();
@@ -290,22 +356,38 @@ int main()
         1, 2, 3    // second triangle
     };
     
-    const int instances_index = 100;
+    const int instances_index = 1000;
     InstanceData* instances = new InstanceData[instances_index];
+    b2Body** bodies = new b2Body*[instances_index];
+
+    b2World world({ 0.0f, 0.0f });
+    createWall(glm::vec2(WINDOW_WIDTH / 2, WINDOW_HEIGHT + 5), glm::vec2(WINDOW_WIDTH, 10), world);
+    createWall(glm::vec2(WINDOW_WIDTH / 2, -5), glm::vec2(WINDOW_WIDTH, 10), world);
+    createWall(glm::vec2(-5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
+    createWall(glm::vec2(WINDOW_WIDTH + 5, WINDOW_HEIGHT / 2), glm::vec2(10, WINDOW_HEIGHT), world);
 
     for (size_t i = 0; i < instances_index; i++)
     {
-        glm::vec2 position(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
-        glm::vec3 color(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
-        glm::vec2 scale = (rndBool()) ? glm::vec2(0.025f, 0.0f) : glm::vec2(0.025f, 0.025f);
-        float angle = 0.0f;
+        float       angle = 0.0f;
+        float       rndRadius = rndFloat(5, 25);
+        glm::vec2   rndPosition(rndFloat(0, WINDOW_WIDTH), rndFloat(0, WINDOW_HEIGHT));
+        glm::vec2   rndScale(rndFloat(5, 25), rndFloat(5, 25));
+        glm::vec3   rndColor(rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f), rndFloat(0.0f, 1.0f));
+        bool        isCircle = rndBool();
+
+        glm::vec2 scaleNorm = (!isCircle) ? glm::vec2((float)(rndScale.x/2) / WINDOW_HEIGHT * 2, (float)(rndScale.y/2) / WINDOW_HEIGHT * 2) : glm::vec2((float)rndRadius / WINDOW_HEIGHT * 2, 0.0f);
+        glm::vec2 posNorm = pixelToNormalized(rndPosition.x, rndPosition.y);
 
         instances[i] = {
-            position,
-            scale,
-            color,
+            posNorm,
+            scaleNorm,
+            rndColor,
             angle
         };
+        if (isCircle) bodies[i] = createBall(rndPosition, rndRadius, world);
+        else bodies[i] = createRectangle(rndPosition, rndScale, world);
+
+        bodies[i]->ApplyAngularImpulse(rndFloat(-0.01f, 0.01f), true);
     }
 
     GLuint VAO, VBO, EBO, iPosVBO, iColorVBO, iModelVBO, iAngleVBO;
@@ -347,25 +429,24 @@ int main()
     glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(orthoMatrix));
     glUniform2f(glGetUniformLocation(shader, "resolution"), WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    float rotationAngle = 0.0f;             // Initial rotation angle
-    float rotationSpeed = 1.0f;             // Adjust as needed (radians per second)
-    double lastFrameTime = glfwGetTime();   // Get initial time
-
+    double lastFrameTime = glfwGetTime();
     while (!glfwWindowShouldClose(window))
     {
         {
-            rotationAngle += (rotationSpeed * (float)getDeltaTima(lastFrameTime));
-            if (rotationAngle >= 2.0f * glm::pi<float>()) rotationAngle -= 2.0f * glm::pi<float>();
+            float deltaTime = (float)getDeltaTima(lastFrameTime);
+            if (deltaTime < 1.0f / 60) world.Step(deltaTime, 6, 2);
+
             for (size_t i = 0; i < instances_index; i++)
             {
-                instances[i].angle = rotationAngle;
-                instances[i].position = glm::vec2(rndFloat(-ASPECT_RATIO, ASPECT_RATIO), rndFloat(-1.0f, 1.0f));
-            }
-            glBindBuffer(GL_ARRAY_BUFFER, iAngleVBO);
-            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
+                b2Vec2 pos = bodies[i]->GetPosition();
+                float radians = bodies[i]->GetAngle();
 
+                instances[i].position = pixelToNormalized(pos.x * BOX2D_SCALE, pos.y * BOX2D_SCALE);
+                instances[i].angle = radians;
+            }
             glBindBuffer(GL_ARRAY_BUFFER, iPosVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
+            glBindBuffer(GL_ARRAY_BUFFER, iAngleVBO);
             glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
