@@ -277,6 +277,16 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
     }
 }
 
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+{
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
+    {
+        double xpos, ypos;
+        glfwGetCursorPos(window, &xpos, &ypos);
+        std::cout << "Mouse clicked at position: (" << xpos << ", " << ypos << ")" << std::endl;
+    }
+}
+
 b2Body* createWall(glm::vec2 pos, glm::vec2 size, b2World& world) {
     b2BodyDef groundBodyDef;
     groundBodyDef.position.Set(pos.x / BOX2D_SCALE, pos.y / BOX2D_SCALE);
@@ -339,6 +349,7 @@ int main()
     glfwInit();
     //glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "OpenGL", NULL, NULL);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetKeyCallback(window, keyCallback);
     glfwMakeContextCurrent(window);
     glfwSwapInterval(0);
@@ -411,13 +422,13 @@ int main()
     BufferData colorData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW};
     createVBO(iColorVBO, VAO, colorData, colorAttr);
 
-    // Create VBO for instance models
-    VertexAttribute scaleAttr = { 3, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, scale) };
+    // Create VBO for instance scales
+    VertexAttribute scaleAttr = { 3, 2, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, scale) };
     BufferData scaleData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW };
     createVBO(iModelVBO, VAO, scaleData, scaleAttr);
 
     // Create VBO for instance angles
-    VertexAttribute angleAttr = { 4, 3, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, angle) };
+    VertexAttribute angleAttr = { 4, 1, GL_FLOAT, GL_FALSE, sizeof(InstanceData), (void*)offsetof(InstanceData, angle) };
     BufferData angleData = { instances, instances_index * sizeof(InstanceData), GL_STATIC_DRAW };
     createVBO(iAngleVBO, VAO, angleData, angleAttr);
 
@@ -450,6 +461,7 @@ int main()
             glBufferSubData(GL_ARRAY_BUFFER, 0, instances_index * sizeof(InstanceData), instances);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
+        glClearColor(0.125f, 0.125f, 0.125f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(shader);
         glBindVertexArray(VAO);
